@@ -1,0 +1,34 @@
+environment:
+  device: "cuda:0"
+  precision: "float32"
+  seed: 42
+
+anomaly_pipeline:
+  input_resolution: [256, 256]
+  channels: 3
+  batch_size: 1
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+  anomaly_threshold: 0.35
+  top_k_percent: 0.01
+
+detection_pipeline:
+  input_resolution: [640, 640]
+  channels: 3
+  batch_size: 1
+  num_classes: 80
+  num_candidates: 8400
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+
+fixtures:
+  fixtures_dir: "tests/fixtures"
+  image_256: "tests/fixtures/image_256_uint8.npy"
+  image_640: "tests/fixtures/image_640_uint8.npy"
+  yolo_candidates: "tests/fixtures/yolo_candidates_8400.pt"
+  expected_outputs_dir: "tests/fixtures/expected_outputs"
+
+profiling:
+  warmup_iterations: 30
+  active_iterations: 100
+  output_dir: "profiling_output"

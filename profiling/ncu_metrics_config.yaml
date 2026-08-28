@@ -1,0 +1,34 @@
+target_metrics:
+  timing:
+    - "gpu__time_duration.sum"
+  occupancy:
+    - "sm__warps_active.avg.pct_of_peak_sustained_active"
+    - "launch__occupancy_per_block_theoretical"
+    - "launch__registers_per_thread"
+    - "launch__shared_mem_per_block_allocated"
+  memory_throughput:
+    - "dram__throughput.avg.pct_of_peak_sustained_elapsed"
+    - "lts__throughput.avg.pct_of_peak_sustained_elapsed"
+    - "l1tex__throughput.avg.pct_of_peak_sustained_active"
+  cache_hit_rates:
+    - "l1tex__t_sector_hit_rate.pct"
+    - "lts__t_sector_hit_rate.pct"
+  warp_stalls:
+    - "smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct"
+    - "smsp__warp_issue_stalled_short_scoreboard_per_warp_active.pct"
+    - "smsp__warp_issue_stalled_math_throttle_per_warp_active.pct"
+    - "smsp__warp_issue_stalled_memory_throttle_per_warp_active.pct"
+
+kernels_to_profile:
+  - name: "fused_preprocess_triton"
+    module: "src.triton_kernels.fused_preprocess"
+    function: "fused_preprocess_triton"
+    target_shapes: [[256, 256], [640, 640]]
+  - name: "fused_preprocess_failed_2d"
+    module: "src.triton_kernels.fused_preprocess_failed"
+    function: "fused_preprocess_failed_2d"
+    target_shapes: [[256, 256], [640, 640]]
+  - name: "candidate_filter_triton"
+    module: "src.triton_kernels.candidate_filter"
+    function: "candidate_filter_triton"
+    target_shapes: [[8400, 84]]

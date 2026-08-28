@@ -1,0 +1,43 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.coverage.*
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Triton & GPU compilation cache
+.triton/
+*.ptx
+*.cubin
+
+# Profiler & large raw trace files (keep manifests/JSON, exclude massive .ncu-rep if generated)
+*.ncu-rep
+*.nsys-rep
+*.qdrep
+*.sqlite
+
+# LaTeX auxiliary files (keep main.pdf, main.tex, references.bib, and zip archives)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+paper/*.blg
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+
+# System files
+.DS_Store
+Thumbs.db
+*Zone.Identifier*

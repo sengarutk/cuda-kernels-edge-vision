@@ -1,0 +1,42 @@
+[
+  {
+    "Kernel Name": "Triton 1D Preprocess (640x640)",
+    "Duration (\u00b5s)": 47.6,
+    "Achieved Occupancy (%)": 78.4,
+    "Registers / Thread": 24,
+    "DRAM Throughput (%)": 67.2,
+    "L1 Cache Hit Rate (%)": 92.1,
+    "L2 Cache Hit Rate (%)": 84.5,
+    "Dominant Warp Stall": "Memory Throttle (34.2%)"
+  },
+  {
+    "Kernel Name": "Triton 2D Failed Preprocess (640x640)",
+    "Duration (\u00b5s)": 239.6,
+    "Achieved Occupancy (%)": 28.1,
+    "Registers / Thread": 42,
+    "DRAM Throughput (%)": 22.4,
+    "L1 Cache Hit Rate (%)": 48.3,
+    "L2 Cache Hit Rate (%)": 51.2,
+    "Dominant Warp Stall": "Long Scoreboard (58.9%)"
+  },
+  {
+    "Kernel Name": "Triton Candidate Filter (8400x84)",
+    "Duration (\u00b5s)": 371.7,
+    "Achieved Occupancy (%)": 64.5,
+    "Registers / Thread": 32,
+    "DRAM Throughput (%)": 41.8,
+    "L1 Cache Hit Rate (%)": 88.6,
+    "L2 Cache Hit Rate (%)": 79.2,
+    "Dominant Warp Stall": "Short Scoreboard (42.1%)"
+  },
+  {
+    "Kernel Name": "PyTorch Eager Copy/Cast (640x640)",
+    "Duration (\u00b5s)": 111.6,
+    "Achieved Occupancy (%)": 82.0,
+    "Registers / Thread": 16,
+    "DRAM Throughput (%)": 54.1,
+    "L1 Cache Hit Rate (%)": 72.0,
+    "L2 Cache Hit Rate (%)": 66.4,
+    "Dominant Warp Stall": "Launch Overhead / Memory Throttle"
+  }
+]
