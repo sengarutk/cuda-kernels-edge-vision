@@ -25,7 +25,6 @@ weights/
 
 # Raw profiler outputs (parsed CSV/JSON summaries in results/ are committed)
 results/ncu/reports/
-results/torch_profiler/*_trace.json
 *.ncu-rep
 *.nsys-rep
 *.qdrep

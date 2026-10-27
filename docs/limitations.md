@@ -18,6 +18,10 @@
   own CUDA graphs) are not evaluated. Manual CUDA-graph capture of eager code is.
 - **Nsight Compute** runs at locked base clocks with cache flushing (its defaults), so its
   durations are not latency results.
+- **No timeline traces.** CUPTI fails to initialize under this WSL2 setup
+  (`CUPTI_ERROR_NOT_INITIALIZED`), so the PyTorch profiler records CPU operators only and
+  Nsight Systems GPU traces are unavailable. GPU-side behaviour comes from Nsight Compute and
+  from CUDA-event device times instead.
 
 ## Future work
 

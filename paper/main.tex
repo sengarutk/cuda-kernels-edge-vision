@@ -31,9 +31,9 @@ an RTX~4050 Laptop GPU. We separate \emph{device time} (GPU execution with launc
 from \emph{host latency} (what the application waits for). In isolation, the preprocessing kernel
 is \res{pre/speedup_vs_eager/min}--\res{pre/speedup_vs_eager/max}$\times$ faster than PyTorch eager
 on the GPU and \res{pre/speedup_vs_compiled/min}--\res{pre/speedup_vs_compiled/max}$\times$ as fast as
-TorchInductor, but a single call's host latency is dominated by dispatch. The fused filter halves
-host latency relative to eager (\res{filter/640/eager/warm/host} $\rightarrow$
-\res{filter/640/triton/warm/host}\,\textmu s), yet its kernel accounts for only
+TorchInductor, but a single call's host latency is dominated by dispatch. The fused filter cuts
+host latency \res{filter/640/warm/host_speedup_vs_eager}$\times$ relative to eager
+(\res{filter/640/eager/warm/host} $\rightarrow$ \res{filter/640/triton/warm/host}\,\textmu s), yet its kernel accounts for only
 \res{filter/640/triton_kernel_only/warm/dev}\,\textmu s of that. End to end, swapping in either
 kernel changes pipeline latency by less than run-to-run variation, while capturing the static part
 of each pipeline in a CUDA graph reduces latency by \res{pipe/anomaly/pre=triton,model=eager,cuda-graph/gain}\%
@@ -248,13 +248,12 @@ preprocessing and the model in one CUDA graph reduces it by
 (p50 \res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/e2ems}\,ms). The anomaly
 pipeline shows the same pattern: a CUDA graph reduces latency by
 \res{pipe/anomaly/pre=eager,model=eager,cuda-graph/gain}\% (eager preprocessing) and
-\res{pipe/anomaly/pre=triton,model=eager,cuda-graph/gain}\% (Triton). Once launches are removed,
-the custom kernels become visible: with CUDA graphs, the Triton configuration is
-\res{pipe/detection/graph_triton_vs_eager}\% faster than the eager one for detection, where the
-fused filter's saving falls outside the graph, and \res{pipe/anomaly/graph_triton_vs_eager}\% faster
-for the anomaly pipeline. These differences are smaller than the block spread of the non-graph
-configurations, but graph replay is far more stable
-(\res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/spread}\% block spread).
+\res{pipe/anomaly/pre=triton,model=eager,cuda-graph/gain}\% (Triton). With launches removed, the
+Triton configuration's median is \res{pipe/detection/graph_triton_vs_eager}\% lower than the eager one
+for detection, where the fused filter runs outside the graph, and \res{pipe/anomaly/graph_triton_vs_eager}\%
+lower for the anomaly pipeline. Both differences are still within the run-to-run spread of block medians
+(\res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/spread}\% for the detection graph
+configuration), so we do not claim them as significant.
 
 \section{Discussion}
 \label{sec:discussion}
@@ -289,9 +288,10 @@ TensorRT or Jetson evaluation; latency only, no accuracy.
 \section{Conclusion}
 On an RTX~4050 Laptop GPU, fused Triton kernels for batch-1 preprocessing and YOLO candidate
 filtering are much faster than PyTorch eager on the GPU, match or beat TorchInductor for
-preprocessing (up to \res{pre/speedup_vs_compiled/max}$\times$), and halve the filter's host latency.
-Yet in eager pipelines they do not measurably change end-to-end latency, which is set by kernel-launch
-overhead: CUDA graphs reduce it by about half, and only then do the custom kernels add a few percent. Pipeline
+preprocessing (up to \res{pre/speedup_vs_compiled/max}$\times$), and cut the filter's host latency
+\res{filter/640/warm/host_speedup_vs_eager}$\times$. Yet they do not measurably change end-to-end
+latency, which is set by kernel-launch overhead: CUDA graphs reduce it by about half, while the
+custom kernels' remaining effect stays within run-to-run variation. Pipeline
 optimization at batch~1 should start by removing launches and synchronizations, and every speedup
 claim should state which of device time or host latency it measures.
 

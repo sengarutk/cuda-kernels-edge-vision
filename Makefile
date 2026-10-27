@@ -2,7 +2,7 @@ PYTHON ?= python
 NCU ?= ncu
 export PYTHONPATH := $(CURDIR)
 
-.PHONY: all install test bench ncu torch-profile report figures paper check clean
+.PHONY: all install test bench ncu report figures paper check clean
 
 all: test bench ncu report figures paper
 
@@ -20,9 +20,6 @@ bench:
 
 ncu:
 	NCU="$(NCU)" PYTHON="$(PYTHON)" bash scripts/profile_ncu.sh
-
-torch-profile:
-	$(PYTHON) profiling/run_torch_profiler.py
 
 report:
 	$(PYTHON) scripts/render_report.py

@@ -43,44 +43,44 @@ Measured on NVIDIA GeForce RTX 4050 Laptop GPU (sm_89, 24.0 MB L2), PyTorch 2.5.
 
 | Resolution | Eager | Inductor | Triton 1D | Triton 2D | Triton throughput (GB/s) | vs Eager | vs Inductor |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 256x256 | 27.6 | 5.1 | 5.1 | 7.2 | 192.0 | 5.40x | 1.00x |
-| 640x640 | 71.7 | 14.3 | 11.1 | 23.6 | 551.7 | 6.44x | 1.29x |
-| 1280x720 | 210.9 | 28.7 | 18.4 | 47.1 | 750.0 | 11.44x | 1.56x |
-| 1920x1080 | 1494.0 | 80.9 | 77.8 | 109.6 | 399.7 | 19.20x | 1.04x |
-| 3840x2160 | 6200.8 | 887.8 | 596.0 | 618.5 | 208.8 | 10.40x | 1.49x |
+| 256x256 | 28.7 | 5.1 | 5.1 | 7.2 | 192.0 | 5.60x | 1.00x |
+| 640x640 | 71.7 | 14.3 | 11.3 | 23.6 | 545.5 | 6.36x | 1.27x |
+| 1280x720 | 210.9 | 28.7 | 18.4 | 48.0 | 750.0 | 11.44x | 1.56x |
+| 1920x1080 | 1493.5 | 80.9 | 77.8 | 109.6 | 399.7 | 19.19x | 1.04x |
+| 3840x2160 | 6199.3 | 887.8 | 596.0 | 618.5 | 208.8 | 10.40x | 1.49x |
 
 **YOLOv8n candidate filter, host latency p50 (µs), warm L2**
 
 | Input | Eager | Inductor | Triton fused | Triton kernel alone (device) |
 | --- | --- | --- | --- | --- |
-| 640x640 (8400 cands, 46 kept) | 264.4 | 225.3 | 132.0 | 9.2 |
-| 1280x1280 (33600 cands, 55 kept) | 251.9 | 269.3 | 144.6 | 17.4 |
+| 640x640 (8400 cands, 46 kept) | 218.8 | 241.2 | 135.2 | 9.2 |
+| 1280x1280 (33600 cands, 55 kept) | 232.2 | 272.6 | 149.5 | 17.4 |
 
 **Anomaly pipeline (256x256 autoencoder), end-to-end host latency p50 (ms)**
 
 | Configuration | p50 (ms) | Latency reduction vs first row |
 | --- | --- | --- |
-| pre=eager, model=eager | 1.006 | 0.0% |
-| pre=compiled, model=eager | 1.021 | -1.5% |
-| pre=triton, model=eager | 0.986 | 2.0% |
-| pre=eager, model=compiled | 0.976 | 3.0% |
-| pre=compiled, model=compiled | 0.922 | 8.3% |
-| pre=triton, model=compiled | 0.957 | 4.8% |
-| pre=eager, model=eager, cuda-graph | 0.507 | 49.5% |
-| pre=triton, model=eager, cuda-graph | 0.493 | 51.0% |
+| pre=eager, model=eager | 0.958 | 0.0% |
+| pre=compiled, model=eager | 0.962 | -0.4% |
+| pre=triton, model=eager | 0.962 | -0.4% |
+| pre=eager, model=compiled | 0.962 | -0.4% |
+| pre=compiled, model=compiled | 0.930 | 2.9% |
+| pre=triton, model=compiled | 0.930 | 2.9% |
+| pre=eager, model=eager, cuda-graph | 0.507 | 47.1% |
+| pre=triton, model=eager, cuda-graph | 0.495 | 48.3% |
 
 **Detection pipeline (640x640 YOLOv8n + NMS), end-to-end host latency p50 (ms)**
 
 | Configuration | p50 (ms) | Latency reduction vs first row |
 | --- | --- | --- |
-| pre=eager, model=eager, filter=eager | 6.010 | 0.0% |
-| pre=triton, model=eager, filter=eager | 6.038 | -0.5% |
-| pre=eager, model=eager, filter=triton | 5.962 | 0.8% |
-| pre=triton, model=eager, filter=triton | 5.928 | 1.4% |
-| pre=compiled, model=compiled, filter=compiled | 4.751 | 20.9% |
-| pre=triton, model=compiled, filter=triton | 4.565 | 24.0% |
-| pre=eager, model=eager, filter=eager, cuda-graph | 3.055 | 49.2% |
-| pre=triton, model=eager, filter=triton, cuda-graph | 2.856 | 52.5% |
+| pre=eager, model=eager, filter=eager | 6.224 | 0.0% |
+| pre=triton, model=eager, filter=eager | 6.127 | 1.6% |
+| pre=eager, model=eager, filter=triton | 6.104 | 1.9% |
+| pre=triton, model=eager, filter=triton | 6.043 | 2.9% |
+| pre=compiled, model=compiled, filter=compiled | 4.777 | 23.3% |
+| pre=triton, model=compiled, filter=triton | 4.758 | 23.5% |
+| pre=eager, model=eager, filter=eager, cuda-graph | 3.089 | 50.4% |
+| pre=triton, model=eager, filter=triton, cuda-graph | 2.893 | 53.5% |
 
 <!-- RESULTS:END -->
 
@@ -91,14 +91,14 @@ Measured on NVIDIA GeForce RTX 4050 Laptop GPU (sm_89, 24.0 MB L2), PyTorch 2.5.
    automatic fusion at every resolution tested.
 2. **At batch 1, dispatch hides most of it.** Launching any kernel from Python costs tens of
    microseconds, so for small frames a single preprocessing call's host latency barely changes, even
-   though the GPU work shrinks several-fold. The fused YOLO filter halves the filter's host latency,
-   but its kernel accounts for only a few percent of what remains; the rest is dispatch and the one
-   unavoidable read-back of the survivor count.
+   though the GPU work shrinks several-fold. The fused YOLO filter cuts the filter's host latency
+   by about 1.5×, but its kernel accounts for under a tenth of what remains; the rest is dispatch and
+   the one unavoidable read-back of the survivor count.
 3. **End to end, launches dominate.** In eager pipelines, swapping in either kernel changes per-frame
    latency by less than run-to-run variation, because the models launch hundreds of small kernels
    (YOLOv8n's host time is well above its GPU time). Compiling the model helps; capturing the static
-   part of the pipeline in a CUDA graph roughly halves latency. Only inside a CUDA graph do the
-   custom kernels add a measurable few percent.
+   part of the pipeline in a CUDA graph roughly halves latency. Even inside a CUDA graph, the custom
+   kernels' remaining gain is a few percent, within run-to-run spread.
 4. **The 2D-tiled kernel is slower because of memory access, not register pressure.** Nsight Compute
    shows full occupancy for both kernels, but much lower global-load sector efficiency and
    memory-instruction (MIO) throttling for the 2D variant.
@@ -128,7 +128,7 @@ Details, including Nsight Compute on WSL2: [docs/reproducibility.md](docs/reprod
 ```
 src/          kernels, baselines, models, pipelines
 benchmarks/   harness + three benchmark scripts
-profiling/    Nsight Compute targets/config/parser, PyTorch profiler capture
+profiling/    Nsight Compute targets, metric list and CSV parser
 results/      measured JSON (+ Nsight Compute CSV) and nothing else
 scripts/      profile_ncu.sh, render_report.py
 docs/         methodology, kernel design, hardware, limitations, generated results

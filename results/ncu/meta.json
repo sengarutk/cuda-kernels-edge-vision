@@ -1,0 +1,6 @@
+{
+  "ncu_version": "Version 2025.3.1.0 (build 36398880) (public-release)",
+  "clock_control": "base (ncu default: SM and memory clocks locked to base)",
+  "cache_control": "all (ncu default: caches flushed before each kernel)",
+  "replay_mode": "kernel"
+}
