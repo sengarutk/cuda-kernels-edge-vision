@@ -1,7 +1,6 @@
 # Python bytecode & cache
 __pycache__/
 *.py[cod]
-*.class
 .pytest_cache/
 .coverage
 htmlcov/
@@ -16,23 +15,30 @@ venv/
 env/
 ENV/
 
+# Model weights (downloaded on demand, SHA-256 verified)
+weights/
+
 # Triton & GPU compilation cache
 .triton/
 *.ptx
 *.cubin
 
-# Profiler & large raw trace files (keep manifests/JSON, exclude massive .ncu-rep if generated)
+# Raw profiler outputs (parsed CSV/JSON summaries in results/ are committed)
+results/ncu/reports/
+results/torch_profiler/*_trace.json
 *.ncu-rep
 *.nsys-rep
 *.qdrep
 *.sqlite
 
-# LaTeX auxiliary files (keep main.pdf, main.tex, references.bib, and zip archives)
+# LaTeX build products (paper/main.pdf is committed)
+paper/build/
 paper/*.aux
 paper/*.log
 paper/*.out
 paper/*.synctex.gz
 paper/*.blg
+paper/*.bbl
 paper/*.toc
 paper/*.fls
 paper/*.fdb_latexmk

@@ -1,9 +1,11 @@
+from typing import Sequence
+
 import numpy as np
 
 def preprocess_numpy_cpu(
     img_uint8_hwc: np.ndarray,
-    mean: list[float] = [0.485, 0.456, 0.406],
-    std: list[float] = [0.229, 0.224, 0.225],
+    mean: Sequence[float] = (0.485, 0.456, 0.406),
+    std: Sequence[float] = (0.229, 0.224, 0.225),
     dtype: np.dtype = np.float32
 ) -> np.ndarray:
     """Standard host-side CPU preprocessing: HWC uint8 -> CHW normalized float array [1, 3, H, W]."""

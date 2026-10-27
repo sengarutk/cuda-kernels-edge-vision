@@ -1,17 +1,26 @@
-# Limitations & Scope Disclosure
+# Limitations and Scope
 
-## 1. Target Architecture Bounds
-- **Hardware Profile**: All experiments were conducted on an NVIDIA GeForce RTX 4050 Laptop GPU (6 GB GDDR6 VRAM, 96-bit bus, 192.0 GB/s peak theoretical bandwidth, `sm_89` Ada Lovelace micro-architecture).
-- **Environment**: Execution took place under WSL2 (Ubuntu 22.04 LTS). This represents an edge-workstation development environment rather than an embedded Jetson SoC (Orin Nano / Orin AGX) with unified memory architecture (UMA).
+- **One GPU, one OS.** All measurements come from a single RTX 4050 Laptop GPU under WSL2. Laptop
+  boost clocks vary with temperature and power, and WSL2 adds a virtualization layer to every
+  kernel launch and synchronization. Expect other GPUs, native Linux, or a Jetson (shared CPU/GPU
+  memory, no PCIe copy) to produce different absolute numbers and possibly different rankings.
+- **Batch size 1, one stream.** Batched or multi-stream serving amortizes launch overhead
+  differently.
+- **Accuracy is not evaluated.** The anomaly autoencoder has seeded random, untrained weights:
+  its score measures latency, not defects. YOLOv8n uses pretrained COCO weights on a street scene
+  (`bus.jpg`), not an industrial dataset. Kernel outputs are verified for numerical agreement with
+  PyTorch, not for detection quality.
+- **Model execution is FP32.** Convolutions use cuDNN's default TF32 tensor-core math. No INT8 or
+  FP16 model, TensorRT engine or pruning is evaluated.
+- **Inputs.** The preprocessing kernels assume a tightly packed RGB `uint8` frame and do not
+  resize, letterbox or swap channel order (BGR→RGB). The candidate filter assumes batch 1.
+- **TorchInductor** is used in `mode="default"`. `max-autotune` and `reduce-overhead` (Inductor's
+  own CUDA graphs) are not evaluated. Manual CUDA-graph capture of eager code is.
+- **Nsight Compute** runs at locked base clocks with cache flushing (its defaults), so its
+  durations are not latency results.
 
-## 2. Single-Stream & Batch-1 Constraints
-- **Workload Focus**: Workloads are strictly scoped to single-stream batch size 1, reflecting hard real-time latency-critical industrial inspection lines.
-- **Batching Trade-offs**: High-throughput batched serving ($B \ge 8$) amortizes kernel launch overhead differently and alters cache hit ratios.
+## Future work
 
-## 3. Unmodified Neural Compute Scope
-- **Neural Network Weights**: Model forward passes (Autoencoder and YOLO Nano) were executed without structural weight pruning or INT8 quantization.
-- **Optimization Focus**: This research intentionally isolates the non-neural pipeline boundaries (H2D transfer, normalization, planar transposition, thresholding, coordinate filtering) to assess their proportional impact under Amdahl's Law.
-
-## 4. Future Systems Work
-- **Fused Bilinear Resizing**: Integrating interpolation/resizing directly into the transposition kernel to eliminate separate resizing passes on host or GPU.
-- **Native TensorRT Plugins**: Packaging custom Triton kernels as native TensorRT IPluginV2DynamicExt nodes to bypass Python driver dispatch completely.
+- Fuse letterbox resizing and BGR→RGB conversion into the preprocessing kernel.
+- Evaluate on a Jetson Orin (shared memory) and on native Linux.
+- Compare against TensorRT engines with the pre- and post-processing kernels as plugins.

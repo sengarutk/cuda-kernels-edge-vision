@@ -1,16 +1,40 @@
-.PHONY: install test profile-torch profile-nsys clean
+PYTHON ?= python
+NCU ?= ncu
+export PYTHONPATH := $(CURDIR)
+
+.PHONY: all install test bench ncu torch-profile report figures paper check clean
+
+all: test bench ncu report figures paper
 
 install:
-	pip install -e ".[dev]"
+	pip install -r requirements.txt
+	pip install --no-deps -e .
 
 test:
-	pytest -v tests/
+	$(PYTHON) -m pytest
 
-profile-torch:
-	python profiling/run_torch_profiler.py
+bench:
+	$(PYTHON) benchmarks/bench_preprocess.py
+	$(PYTHON) benchmarks/bench_filter.py
+	$(PYTHON) benchmarks/bench_pipelines.py
 
-profile-nsys:
-	bash scripts/profile_nsys.sh
+ncu:
+	NCU="$(NCU)" PYTHON="$(PYTHON)" bash scripts/profile_ncu.sh
+
+torch-profile:
+	$(PYTHON) profiling/run_torch_profiler.py
+
+report:
+	$(PYTHON) scripts/render_report.py
+
+figures:
+	$(PYTHON) paper/generate_figures.py
+
+paper: report figures
+	bash paper/build_paper.sh
+
+check:
+	$(PYTHON) scripts/render_report.py --check
 
 clean:
-	rm -rf build dist *.egg-info .pytest_cache profiling_output/
+	rm -rf build dist *.egg-info .pytest_cache .coverage htmlcov paper/build

@@ -1,14 +1,3 @@
-@article{chen2020deep,
-  title={Deep Learning for Visual Flaw Detection in Industrial Products: A Review},
-  author={Chen, Yundong and Ding, Yuchao and Zhao, Feng and Wang, Erwei and Xiang, Tao},
-  journal={IEEE Transactions on Automation Science and Engineering},
-  volume={18},
-  number={4},
-  pages={1571--1584},
-  year={2020},
-  publisher={IEEE}
-}
-
 @inproceedings{bergmann2019mvtec,
   title={{MVTec AD}--A Comprehensive Real-World Dataset for Unsupervised Anomaly Detection},
   author={Bergmann, Paul and Fauser, Michael and Sattlegger, David and Steger, Carsten},
@@ -25,18 +14,11 @@
   year={2016}
 }
 
-@article{bochkovskiy2020yolov4,
-  title={{YOLOv4}: Optimal Speed and Accuracy of Object Detection},
-  author={Bochkovskiy, Alexey and Wang, Chien-Yao and Liao, Hong-Yuan Mark},
-  journal={arXiv preprint arXiv:2004.10934},
-  year={2020}
-}
-
-@article{han2015deep,
-  title={Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding},
-  author={Han, Song and Mao, Huizi and Dally, William J.},
-  journal={arXiv preprint arXiv:1510.00149},
-  year={2015}
+@misc{jocher2023yolov8,
+  title={Ultralytics {YOLOv8}, version 8.0.0},
+  author={Jocher, Glenn and Chaurasia, Ayush and Qiu, Jing},
+  year={2023},
+  howpublished={\url{https://github.com/ultralytics/ultralytics}}
 }
 
 @inproceedings{paszke2019pytorch,
@@ -46,27 +28,6 @@
   volume={32},
   pages={8024--8035},
   year={2019}
-}
-
-@misc{nvidia2023dali,
-  title={{NVIDIA DALI}: Data Loading and Augmentation Library for Deep Learning Applications},
-  author={{NVIDIA Corporation}},
-  year={2023},
-  howpublished={\url{https://github.com/NVIDIA/DALI}}
-}
-
-@misc{nvidia2023deepstream,
-  title={{NVIDIA DeepStream SDK}: A Complete Streaming Analytics Toolkit for {AI}-Based Multi-Sensor Processing},
-  author={{NVIDIA Corporation}},
-  year={2023},
-  howpublished={\url{https://developer.nvidia.com/deepstream-sdk}}
-}
-
-@misc{nvidia2024tensorrt,
-  title={{NVIDIA TensorRT}: High-Performance Deep Learning Inference SDK},
-  author={{NVIDIA Corporation}},
-  year={2024},
-  howpublished={\url{https://developer.nvidia.com/tensorrt}}
 }
 
 @inproceedings{tillet2019triton,
@@ -88,52 +49,72 @@
 @inproceedings{chen2018tvm,
   title={{TVM}: An Automated End-to-End Optimizing Compiler for Deep Learning},
   author={Chen, Tianqi and Moreau, Thierry and Jiang, Ziheng and Zheng, Lianmin and Yan, Eddie and Shen, Haichen and Cowan, Meghan and Wang, Leyuan and Hu, Kevin and Ceze, Luis and others},
-  booktitle={13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 18)},
+  booktitle={13th USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
   pages={578--594},
   year={2018}
 }
 
 @inproceedings{ragankelley2013halide,
-  title={Halide: A Language and Compiler for Optimizing Parallelism, Locality, and Pipeline Topology in Image Processing Pipelines},
+  title={Halide: A Language and Compiler for Optimizing Parallelism, Locality, and Recomputation in Image Processing Pipelines},
   author={Ragan-Kelley, Jonathan and Barnes, Connelly and Adams, Andrew and Paris, Sylvain and Durand, Fr{\'e}do and Amarasinghe, Saman},
   booktitle={Proceedings of the 34th ACM SIGPLAN Conference on Programming Language Design and Implementation (PLDI)},
   pages={519--530},
   year={2013}
 }
 
-@inproceedings{volkov2008fitting,
-  title={Fitting {FFT} onto the {G80} Architecture},
-  author={Volkov, Vasily and Kazian, Brian},
-  booktitle={ACM/IEEE SC 2008 Conference},
-  pages={1--12},
-  year={2008},
-  organization={IEEE}
-}
-
-@article{dao2022flashattention,
+@inproceedings{dao2022flashattention,
   title={{FlashAttention}: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
   author={Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
-  journal={Advances in Neural Information Processing Systems (NeurIPS)},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
   volume={35},
   pages={16344--16359},
   year={2022}
 }
 
-@inproceedings{kwon2023vllm,
-  title={Efficient Memory Management for Large Language Model Serving with {PagedAttention}},
-  author={Kwon, Woosuk and Li, Zhuohan and Zhuang, Siyuan and Sheng, Ying and Zheng, Lianmin and Yu, Cody Hao and Gonzalez, Joseph E. and Zhang, Hao and Stoica, Ion},
-  booktitle={Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP)},
-  pages={611--626},
-  year={2023}
+@article{mei2017dissecting,
+  title={Dissecting {GPU} Memory Hierarchy Through Microbenchmarking},
+  author={Mei, Xinxin and Chu, Xiaowen},
+  journal={IEEE Transactions on Parallel and Distributed Systems},
+  volume={28},
+  number={1},
+  pages={72--86},
+  year={2017}
 }
 
-@inproceedings{nath2010analyzing,
-  title={Analyzing the {GPU} Memory Hierarchy with Microbenchmarks},
-  author={Nath, Rajib and Subhlok, Jaspal},
-  booktitle={2010 IEEE International Symposium on Parallel \& Distributed Processing (IPDPS)},
-  pages={1--8},
-  year={2010},
-  organization={IEEE}
+@techreport{merrill2016single,
+  title={Single-pass Parallel Prefix Scan with Decoupled Look-back},
+  author={Merrill, Duane and Garland, Michael},
+  institution={NVIDIA},
+  number={NVR-2016-002},
+  year={2016}
+}
+
+@misc{nvidia2024tensorrt,
+  title={{NVIDIA TensorRT}: High-Performance Deep Learning Inference SDK},
+  author={{NVIDIA Corporation}},
+  year={2024},
+  howpublished={\url{https://developer.nvidia.com/tensorrt}}
+}
+
+@misc{nvidia2023dali,
+  title={{NVIDIA DALI}: Data Loading and Augmentation Library for Deep Learning Applications},
+  author={{NVIDIA Corporation}},
+  year={2023},
+  howpublished={\url{https://github.com/NVIDIA/DALI}}
+}
+
+@misc{nvidia2025nsightcompute,
+  title={{Nsight Compute} Profiling Guide},
+  author={{NVIDIA Corporation}},
+  year={2025},
+  howpublished={\url{https://docs.nvidia.com/nsight-compute/ProfilingGuide/}}
+}
+
+@misc{nvidia2025cudaguide,
+  title={{CUDA C++} Programming Guide: {CUDA} Graphs},
+  author={{NVIDIA Corporation}},
+  year={2025},
+  howpublished={\url{https://docs.nvidia.com/cuda/cuda-c-programming-guide/}}
 }
 
 @inproceedings{amdahl1967validity,

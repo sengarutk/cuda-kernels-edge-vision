@@ -1,252 +1,300 @@
 \documentclass[10pt,twocolumn,letterpaper]{article}
 
-\usepackage[margin=0.65in]{geometry}
+\usepackage[margin=0.7in]{geometry}
 \usepackage{times}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsmath,amssymb}
 \usepackage{booktabs}
-\usepackage{multirow}
 \usepackage{graphicx}
 \usepackage{microtype}
 \usepackage{xcolor}
-\usepackage{listings}
-\usepackage{hyperref}
+\usepackage[hidelinks]{hyperref}
 \usepackage{cite}
 
-\hypersetup{
-    colorlinks=true,
-    linkcolor=blue,
-    citecolor=blue,
-    urlcolor=blue
-}
+% Every measured number below is a \res macro generated from results/*.json by
+% scripts/render_report.py. Do not type measurements into this file.
+\input{generated/results.tex}
 
-% Micro-spacing tuning to lock paper strictly to 4 pages
-\setlength{\textfloatsep}{3.0pt plus 1pt minus 1pt}
-\setlength{\floatsep}{3.0pt plus 1pt minus 1pt}
-\setlength{\intextsep}{3.0pt plus 1pt minus 1pt}
-\setlength{\abovecaptionskip}{1.5pt}
-\setlength{\belowcaptionskip}{1.5pt}
-
-\title{\Large \bf When Does Kernel Fusion Help? \\ A Micro-Architectural Case Study of Batch-1 Edge Vision Pipelines on Ada Lovelace}
-
-\author{
-    \textbf{Utkarsh Sengar} \\
-    Indian Institute of Technology Dharwad \\
-    \texttt{cs23bt026@iitdh.ac.in}
-}
-
+\title{\Large\bf When Does Kernel Fusion Help?\\A Measured Study of Batch-1 Edge Vision Pipelines on a Laptop GPU}
+\author{\textbf{Utkarsh Sengar}\\Indian Institute of Technology Dharwad\\\texttt{cs23bt026@iitdh.ac.in}}
 \date{}
 
 \begin{document}
-
 \maketitle
 
 \begin{abstract}
-Edge vision inference for automated optical inspection (AOI) operates under strict single-stream ($\text{Batch Size} = 1$) latency bounds. While GPU operator fusion via domain-specific compilers (e.g., OpenAI Triton) is widely advocated to alleviate global memory bandwidth bottlenecks, the systems boundaries where non-neural operator acceleration translates into end-to-end application speedups remain under-characterized. In this work, we present a profiling-driven micro-architectural case study of representative inspection pipelines evaluated on an NVIDIA GeForce RTX 4050 Laptop GPU (Ada Lovelace, \texttt{sm\_89}). We design and evaluate two custom Triton operators: a 1D vectorized fused preprocessor and a register-unrolled 80-class candidate compaction filter. The preprocessing kernel achieves up to a $4.50\times$ isolated speedup ($120.0\text{--}153.4\text{ GB/s}$ effective bandwidth) over PyTorch eager by reducing idealized global memory traffic by $7.4\times$ ($111P \to 15P$ bytes). In full application loops, integration reduces end-to-end latency by $11.5\%$ ($0.783\text{ ms} \to 0.693\text{ ms}$) on a $256\times256$ anomaly pipeline and $12.3\%$ ($2.173\text{ ms} \to 1.907\text{ ms}$, saving $266\,\mu\text{s}$ per frame) on a $640\times640$ detection pipeline. Furthermore, a micro-architectural negative study reveals that intuitive 2D spatial block-tiling spikes register pressure to 42 registers/thread, collapsing active warp occupancy from $78.4\%$ to $28.1\%$ and causing a $5.03\times$ slowdown due to $58.9\%$ long scoreboard stalls. Under Amdahl's Law, pure device-level preprocessing gains yield a $2.3\%$ execution reduction, demonstrating that uncompiled host dispatch and PCIe transfers bound application-level returns.
+Custom GPU kernels for image preprocessing and detector postprocessing are often proposed to cut
+latency in single-stream (batch-1) vision pipelines. We implement two such kernels in Triton, a
+fused \texttt{uint8} HWC$\rightarrow$normalized CHW preprocessor and a single-pass YOLO candidate
+filter with in-kernel stream compaction, and measure them in isolation and inside two complete
+pipelines (a 256$\times$256 convolutional autoencoder and pretrained YOLOv8n at 640$\times$640) on
+an RTX~4050 Laptop GPU. We separate \emph{device time} (GPU execution with launch overhead hidden)
+from \emph{host latency} (what the application waits for). In isolation, the preprocessing kernel
+is \res{pre/speedup_vs_eager/min}--\res{pre/speedup_vs_eager/max}$\times$ faster than PyTorch eager
+on the GPU and \res{pre/speedup_vs_compiled/min}--\res{pre/speedup_vs_compiled/max}$\times$ as fast as
+TorchInductor, but a single call's host latency is dominated by dispatch. The fused filter halves
+host latency relative to eager (\res{filter/640/eager/warm/host} $\rightarrow$
+\res{filter/640/triton/warm/host}\,\textmu s), yet its kernel accounts for only
+\res{filter/640/triton_kernel_only/warm/dev}\,\textmu s of that. End to end, swapping in either
+kernel changes pipeline latency by less than run-to-run variation, while capturing the static part
+of each pipeline in a CUDA graph reduces latency by \res{pipe/anomaly/pre=triton,model=eager,cuda-graph/gain}\%
+(anomaly) and \res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/gain}\% (detection).
+At batch 1 on this hardware, launch overhead, not memory traffic, decides the outcome. We also
+document three benchmarking pitfalls, each of which changed a conclusion during this study, and a
+compiler bug that silently corrupts compiled YOLOv8n outputs.
 \end{abstract}
 
 \section{Introduction}
-Real-time automated optical inspection (AOI) systems in semiconductor packaging, printed circuit board (PCB) assembly, and manufacturing target sub-5ms per-frame latencies operating strictly at batch size 1 \cite{chen2020deep}. Modern edge deployment pipelines combine non-neural input transformations (color format conversion, planar transposition, channel normalization), neural feature extraction (Autoencoders \cite{bergmann2019mvtec}, YOLO object detectors \cite{redmon2016you, bochkovskiy2020yolov4}), and output postprocessing (residual map thresholding, candidate score reduction, Non-Maximum Suppression).
+Inspection and detection systems often process one camera frame at a time under a latency budget.
+Around the neural network, such pipelines run non-neural steps: layout conversion and
+normalization before the model, candidate filtering and non-maximum suppression (NMS) after it.
+Written as framework operator chains~\cite{paszke2019pytorch}, these steps launch several small
+kernels and materialize intermediate tensors. Fusing them into custom kernels~\cite{tillet2019triton}
+is a common recommendation. This paper asks a narrow question: \emph{on a batch-1 pipeline, how much
+latency does such fusion remove, compared with what the GPU compiler and CUDA graphs already provide?}
 
-While optimizing neural network weights via quantization and pruning has been heavily investigated \cite{han2015deep}, preprocessing and postprocessing stages are frequently implemented using composite high-level framework calls (e.g., PyTorch eager \cite{paszke2019pytorch}). These composite operations allocate intermediate GPU tensors, repeatedly accessing global device memory (DRAM) and incurring kernel launch overheads.
+\noindent\textbf{Contributions.}
+(1)~Two Triton kernels: a fused preprocessor that folds normalization into one FMA per element,
+and a single-pass candidate filter that reduces 80 class scores, thresholds, decodes boxes and
+compacts survivors on the GPU with one host synchronization.
+(2)~A measurement protocol that reports GPU device time and host latency separately, with cold
+and warm caches and interleaved repeated blocks.
+(3)~Results against PyTorch eager, TorchInductor~\cite{ansel2024pytorch} and manual CUDA-graph
+capture~\cite{nvidia2025cudaguide}, from isolated kernels up to full pipelines, with Nsight
+Compute~\cite{nvidia2025nsightcompute} counters.
+(4)~Benchmarking pitfalls and a correctness bug: a hidden synchronization inside a timed region,
+which in an earlier version of this work produced a spurious $5\times$ slowdown; cache flushes that
+hide launch overhead or charge dirty-line write-back to the measured kernel; and a TorchDynamo
+mis-trace that silently corrupts \texttt{torch.compile}d YOLOv8n outputs.
+All code, raw results and the generator of every number in this paper are public.\footnote{\url{https://github.com/sengarutk/cuda-kernels-edge-vision}}
+
+\section{Background}
+Operator fusion is a central technique of ML and image-processing compilers such as
+Halide~\cite{ragankelley2013halide}, TVM~\cite{chen2018tvm} and TorchInductor~\cite{ansel2024pytorch},
+and of hand-written kernels such as FlashAttention~\cite{dao2022flashattention}. It removes
+intermediate global-memory traffic and kernel launches. Both savings are bounded by Amdahl's
+law~\cite{amdahl1967validity}: they only matter if the fused stages make up a meaningful part of
+end-to-end time. GPU memory behaviour (coalescing, sector use, caching) is analysed with
+microbenchmarks and hardware counters~\cite{mei2017dissecting,nvidia2025nsightcompute}.
+CUDA graphs~\cite{nvidia2025cudaguide} remove per-kernel launch cost by replaying a captured
+sequence of kernels. Libraries such as DALI~\cite{nvidia2023dali} and TensorRT~\cite{nvidia2024tensorrt}
+target the same pipeline stages in production.
+
+\section{Kernels}
+\noindent\textbf{Kernel 1: preprocessing.} The kernel computes
+$y_{c,h,w} = x_{h,w,c}\cdot s_c + b_c$ with $s_c = 1/(255\sigma_c)$ and $b_c = -\mu_c/\sigma_c$ folded
+on the host. A 1D grid assigns consecutive pixels to each program (block size autotuned). Each
+pixel needs three byte loads at stride~3 and three coalesced plane stores. Compulsory DRAM traffic
+is $15P$ bytes for $P$ pixels in FP32. The 5-kernel eager chain (\texttt{to}, \texttt{div},
+\texttt{sub}, \texttt{div}, \texttt{contiguous}) moves up to $111P$ bytes when no intermediate stays
+in cache. FP16 output is computed in FP32 and rounded once. A 2D-tiled variant performs the
+same arithmetic on $16{\times}16$-pixel tiles, so each tile row touches only 48 contiguous input bytes.
+
+\noindent\textbf{Kernel 2: candidate filter.} YOLOv8~\cite{jocher2023yolov8,redmon2016you}
+produces a $[1, 84, N]$ tensor: 4 box values and 80 sigmoid class scores per candidate. One program
+handles a block of candidates. A compile-time-unrolled loop over classes keeps the running max and
+argmax in registers, with coalesced loads in this channels-first layout. Survivors (score
+$\geq 0.25$) are decoded from $(c_x, c_y, w, h)$ to corners and compacted in the kernel: each program
+reserves output slots with one atomic add and orders its survivors with a prefix sum (cf.\ the
+decoupled scan of Merrill and Garland~\cite{merrill2016single}). The host reads the survivor count
+once. The eager baseline follows the Ultralytics pre-filter: one reduction, one \texttt{nonzero}
+(also a single synchronization), then argmax and box conversion on the survivors only.
+
+\section{Methodology}
+\noindent\textbf{Setup.} \res{env/gpu} (\res{env/compute_capability}, \res{env/sm_count} SMs,
+\res{env/l2_cache_mb}\,MB L2, 192\,GB/s peak DRAM), driver \res{env/driver}, \res{env/os} under WSL2,
+PyTorch \res{env/torch}, Triton \res{env/triton}, Nsight Compute \res{env/ncu}.
+
+\noindent\textbf{Timing.} \emph{Device time} uses CUDA events, with the stream pre-filled by a
+spin kernel that outlasts the host's enqueue time, so the GPU never waits for the CPU inside the
+timed window. \emph{Host latency} is wall-clock time from the call to a completed
+\texttt{synchronize}. For cold-L2 runs, a 64\,MB buffer (more than twice the L2) is \emph{read}
+before every call, outside the timed window. Reading matters: a write-based flush leaves the L2
+full of dirty lines, and their write-back is then charged to the measured kernel
+(Section~\ref{sec:discussion}). Isolated kernels run 300 timed calls after 30 warm-up
+calls. Pipelines run 10 interleaved blocks of 300 frames per configuration, in an order that
+rotates per block; we report pooled percentiles and the spread of block medians.
+
+\noindent\textbf{Workloads.} Preprocessing uses random frames from 256$\times$256 to
+3840$\times$2160. The filter and the detection pipeline use real YOLOv8n outputs for the
+Ultralytics \texttt{bus.jpg} scene (\res{filter/640/cands} candidates, \res{filter/640/kept} above
+threshold, 5 detections after NMS at 640$\times$640). The anomaly autoencoder has seeded random
+weights: we measure latency, not accuracy~\cite{bergmann2019mvtec}. Every kernel output is verified
+against PyTorch before timing (max FP32 deviation \res{pre/max_err_fp32}).
+
+\section{Results}
+\begin{table}[t]
+\centering\small
+\caption{Isolated preprocessing, FP32 device time p50 (\textmu s), cold L2.}
+\label{tab:pre}
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Resolution & Eager & Inductor & Triton 1D & Triton 2D & GB/s \\ \midrule
+256$\times$256 & \res{pre/eager_fp32/256x256/dev} & \res{pre/compiled_fp32/256x256/dev} & \res{pre/triton_fp32/256x256/dev} & \res{pre/triton_2d_fp32/256x256/dev} & \res{pre/256x256/bw_triton} \\
+640$\times$640 & \res{pre/eager_fp32/640x640/dev} & \res{pre/compiled_fp32/640x640/dev} & \res{pre/triton_fp32/640x640/dev} & \res{pre/triton_2d_fp32/640x640/dev} & \res{pre/640x640/bw_triton} \\
+1280$\times$720 & \res{pre/eager_fp32/1280x720/dev} & \res{pre/compiled_fp32/1280x720/dev} & \res{pre/triton_fp32/1280x720/dev} & \res{pre/triton_2d_fp32/1280x720/dev} & \res{pre/1280x720/bw_triton} \\
+1920$\times$1080 & \res{pre/eager_fp32/1920x1080/dev} & \res{pre/compiled_fp32/1920x1080/dev} & \res{pre/triton_fp32/1920x1080/dev} & \res{pre/triton_2d_fp32/1920x1080/dev} & \res{pre/1920x1080/bw_triton} \\
+3840$\times$2160 & \res{pre/eager_fp32/3840x2160/dev} & \res{pre/compiled_fp32/3840x2160/dev} & \res{pre/triton_fp32/3840x2160/dev} & \res{pre/triton_2d_fp32/3840x2160/dev} & \res{pre/3840x2160/bw_triton} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \begin{figure}[t]
 \centering
-\fbox{\parbox{0.95\linewidth}{\centering \scriptsize
-\textbf{Raw Frame (Host Pinned uint8)} $\xrightarrow{\text{DMA: } 30.7\mu\text{s}}$ \textbf{HWC uint8 Tensor} \\
-$\downarrow$ \textit{\textbf{Kernel 1: Fused 1D Preprocess (Multiply-Add + Transpose)}} \\
-\textbf{Planar CHW Float Tensor} $\xrightarrow{\text{Compute}}$ \textbf{Neural Model (AE / YOLO)} \\
-$\downarrow$ \textit{\textbf{Kernel 2: Fused 80-Class Compaction / Residual Map}} \\
-\textbf{Compacted Proposals (560$\times$ Reduction)} $\xrightarrow{\text{NMS}}$ \textbf{Final Defect Decision}
-}}
-\caption{Representative industrial inspection pipeline architecture evaluating fused pre- and post-processing stages under batch-1 constraints.}
-\label{fig:pipeline_arch}
+\includegraphics[width=\linewidth]{figures/fig_preprocess.pdf}
+\caption{Isolated preprocessing device time (log scale), cold L2.}
+\label{fig:pre}
 \end{figure}
 
-In this paper, we investigate the central systems question:
-\begin{quote}
-\textit{Under what micro-architectural conditions does fusing preprocessing and postprocessing into custom Triton kernels reduce latency in batch-1 edge vision pipelines, and when are those gains bounded by PCIe transfers, Python dispatch overhead, or model compute?}
-\end{quote}
+\subsection{Preprocessing in isolation}
+Table~\ref{tab:pre} and Figure~\ref{fig:pre} show device times with a cold L2. The fused kernel is
+\res{pre/speedup_vs_eager/min}--\res{pre/speedup_vs_eager/max}$\times$ faster than the 5-kernel eager
+chain. TorchInductor fuses the same chain automatically. Relative to it, the Triton kernel is
+\res{pre/speedup_vs_compiled/min}--\res{pre/speedup_vs_compiled/max}$\times$ as fast in FP32 (above~1
+means faster) and \res{pre/fp16_speedup_vs_compiled/min}--\res{pre/fp16_speedup_vs_compiled/max}$\times$
+in FP16, so hand-written fusion still has a margin over the compiler on some shapes. That margin is
+measured in microseconds, though. Dispatching any kernel from Python costs tens of microseconds, so
+a single call's \emph{host latency} improves over eager by \res{pre/1920x1080/host_speedup_vs_eager}$\times$
+at 1080p, where GPU work dominates, but only \res{pre/256x256/host_speedup_vs_eager}$\times$ at
+256$\times$256. There the Triton call takes \res{pre/triton_fp32/256x256/host}\,\textmu s on the host for
+\res{pre/triton_fp32/256x256/dev}\,\textmu s of GPU work.
 
-\noindent\textbf{Contributions.} Concretely, this work provides:
-\begin{itemize}
-    \setlength{\itemsep}{0pt}
-    \setlength{\parskip}{0pt}
-    \item \textbf{Idealized Memory Traffic Formulation}: We model global memory traffic for image layout and normalization transformations, showing a theoretical $7.4\times$ reduction ($111P \to 15P$ bytes) over composite eager execution.
-    \item \textbf{Two Implemented Triton Operators}: We implement a 1D vectorized fused preprocessor and an 80-class candidate compaction filter, achieving isolated speedups of $4.50\times$ and $26.4\text{ M cand/s}$ throughput.
-    \item \textbf{Micro-Architectural Negative Study}: Using hardware performance counters, we analyze why an intuitive 2D block-tiled kernel causes a $5.03\times$ performance collapse on Ada Lovelace due to register pressure and less favorable memory access patterns.
-    \item \textbf{Dual-Perspective Amdahl Analysis}: We contrast pure GPU stage acceleration ($+2.3\%$) against complete application loop latency ($+11.5\%$), quantifying the role of host driver overhead on sub-millisecond pipelines.
-    \item \textbf{Open Reproducibility}: We release a fully tested repository with 53 deterministic unit tests, verification fixtures, and profiling harnesses.\footnote{Code repository: \url{https://github.com/sengarutk/cuda-kernels-for-edge-vision}}
-\end{itemize}
-
-\section{Background \& Related Work}
-\noindent\textbf{2.1 Edge Vision Inference Pipelines.} High-speed visual inspection pipelines rely on sequential execution: frame ingest, color space transform, inference, and spatial clustering \cite{redmon2016you, bochkovskiy2020yolov4}. Standard runtimes such as torchvision, OpenCV, or NVIDIA DALI \cite{nvidia2023dali} frequently execute on the CPU or launch un-fused ATen kernels on the GPU, creating PCIe transfer bottlenecks and kernel launch queues. Industrial engines such as DeepStream \cite{nvidia2023deepstream} and TensorRT \cite{nvidia2024tensorrt} accelerate model graphs but leave pipeline boundaries decoupled.
-
-\noindent\textbf{2.2 Domain-Specific Compilers \& Kernel Fusion.} Compilers such as OpenAI Triton \cite{tillet2019triton}, TorchInductor \cite{ansel2024pytorch}, TVM \cite{chen2018tvm}, and Halide \cite{ragankelley2013halide} allow authoring high-performance GPU kernels with block-level programming paradigms. Kernel fusion eliminates intermediate global memory writes by keeping intermediate values inside Streaming Multiprocessor (SM) registers \cite{volkov2008fitting}. While attention fusion (e.g., FlashAttention \cite{dao2022flashattention}) and memory management (e.g., PagedAttention / vLLM \cite{kwon2023vllm}) have transformed LLM serving, non-neural vision operators remain under-explored in batch-1 edge regimes.
-
-\noindent\textbf{2.3 Micro-Architectural Profiling in ML Systems.} Detailed GPU performance counters (warp occupancy, memory throttling, warp issue stalls) provide root-cause insights into memory bandwidth and register pressure bottlenecks \cite{nath2010analyzing}.
-
-\noindent\textbf{2.4 Workload Positioning.} Unlike high-throughput datacenter serving where batching amortizes dispatch overheads ($B \ge 32$), edge industrial inspection operates strictly at $B=1$ with real-time deadline constraints, making sub-millisecond kernel boundaries critical under Amdahl's Law \cite{amdahl1967validity}.
-
-\section{Theoretical Memory Bounds \& Kernel Design}
-
-\subsection{Preprocessing Mathematical Formulation}
-Let an interleaved frame be $X \in \{0, \dots, 255\}^{H \times W \times 3}$. The target planar normalized tensor $Y \in \mathbb{R}^{3 \times H \times W}$ is computed via:
-\begin{equation}
-Y_{c, h, w} = (X_{h, w, c} \cdot \alpha - \mu_c) \cdot \beta_c
-\end{equation}
-where $\alpha = \frac{1.0}{255.0}$ and $\beta_c = \frac{1.0}{\sigma_c}$ are precomputed scalar reciprocals executed via multiply-add operations, allowing intermediate values to remain in registers and avoiding global memory round-trips.
+\subsection{2D tiling}
+With identical, synchronization-free dispatch, the 2D-tiled variant takes
+\res{pre/twod_slowdown/min}--\res{pre/twod_slowdown/max}$\times$ the device time of the 1D kernel.
+Nsight Compute (Table~\ref{tab:ncu}, Figure~\ref{fig:stalls}) attributes this to memory access, not
+register pressure. At 1080p
+both kernels reach full theoretical occupancy, but the 2D kernel's global-load sector efficiency is
+\res{ncu/preprocess_triton_2d_1920x1080/main/ldeff}\% against \res{ncu/preprocess_triton_1920x1080/main/ldeff}\%,
+and its dominant stall is \res{ncu/preprocess_triton_2d_1920x1080/main/stall}
+(\res{ncu/preprocess_triton_2d_1920x1080/main/stallpct}\% of stalls), a queue for memory instructions.
+The 1D kernel is dominated by \res{ncu/preprocess_triton_1920x1080/main/stall}
+(\res{ncu/preprocess_triton_1920x1080/main/stallpct}\%), i.e.\ waiting on DRAM. Short 16-pixel rows
+issue more, smaller memory requests. An earlier version of this study reported a $5\times$ slowdown
+caused by register pressure. That came from the 2D dispatcher reading CUDA-tensor normalization
+constants with \texttt{.tolist()}, a device synchronization inside the timed region that the 1D path
+did not perform.
 
 \begin{table}[t]
-\centering
-\caption{Idealized Global Memory Traffic for $P = H \times W$ Pixels.}
-\label{tab:dram_traffic}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}llcc@{}}
+\centering\small
+\caption{Nsight Compute, largest kernel per target (base clocks, caches flushed). Occ.: achieved
+occupancy; Ld eff.: global-load sector efficiency.}
+\label{tab:ncu}
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{@{}lrrrrr@{}}
 \toprule
-\textbf{Pipeline Stage} & \textbf{Op / Buffer} & \textbf{Read} & \textbf{Write} \\ \midrule
-\multirow{5}{*}{PyTorch Eager} 
- & \texttt{to(fp32)} & $3P$ & $12P$ \\
- & \texttt{div(255.0)} & $12P$ & $12P$ \\
- & \texttt{sub(mean)} & $12P$ & $12P$ \\
- & \texttt{div(std)} & $12P$ & $12P$ \\
- & \texttt{contiguous()} & $12P$ & $12P$ \\ \cmidrule(l){2-4}
- & \textbf{Total Eager} & \multicolumn{2}{c}{$\mathbf{\approx 111P\text{ \textbf{bytes}}}$} \\ \midrule
-\textbf{Fused Triton} & \textbf{Single-Pass FMA} & $\mathbf{3P}$ & $\mathbf{12P}$ \\ \cmidrule(l){2-4}
- & \textbf{Total Fused} & \multicolumn{2}{c}{$\mathbf{\approx 15P\text{ \textbf{bytes}}}$} \\ \bottomrule
-\end{tabular}%
-}
+Kernel & \textmu s & Regs & Occ.\,\% & DRAM\,\% & Ld eff.\,\% \\ \midrule
+Triton 1D, 1080p & \res{ncu/preprocess_triton_1920x1080/main/dur} & \res{ncu/preprocess_triton_1920x1080/main/regs} & \res{ncu/preprocess_triton_1920x1080/main/occ} & \res{ncu/preprocess_triton_1920x1080/main/dram} & \res{ncu/preprocess_triton_1920x1080/main/ldeff} \\
+Triton 2D, 1080p & \res{ncu/preprocess_triton_2d_1920x1080/main/dur} & \res{ncu/preprocess_triton_2d_1920x1080/main/regs} & \res{ncu/preprocess_triton_2d_1920x1080/main/occ} & \res{ncu/preprocess_triton_2d_1920x1080/main/dram} & \res{ncu/preprocess_triton_2d_1920x1080/main/ldeff} \\
+Triton 1D, 640$^2$ & \res{ncu/preprocess_triton_640x640/main/dur} & \res{ncu/preprocess_triton_640x640/main/regs} & \res{ncu/preprocess_triton_640x640/main/occ} & \res{ncu/preprocess_triton_640x640/main/dram} & \res{ncu/preprocess_triton_640x640/main/ldeff} \\
+Inductor, 640$^2$ & \res{ncu/preprocess_compiled_640x640/main/dur} & \res{ncu/preprocess_compiled_640x640/main/regs} & \res{ncu/preprocess_compiled_640x640/main/occ} & \res{ncu/preprocess_compiled_640x640/main/dram} & \res{ncu/preprocess_compiled_640x640/main/ldeff} \\
+Filter $[84,N]$ & \res{ncu/filter_triton_8400/main/dur} & \res{ncu/filter_triton_8400/main/regs} & \res{ncu/filter_triton_8400/main/occ} & \res{ncu/filter_triton_8400/main/dram} & \res{ncu/filter_triton_8400/main/ldeff} \\
+Filter $[N,84]$ & \res{ncu/filter_triton_row_major_8400/main/dur} & \res{ncu/filter_triton_row_major_8400/main/regs} & \res{ncu/filter_triton_row_major_8400/main/occ} & \res{ncu/filter_triton_row_major_8400/main/dram} & \res{ncu/filter_triton_row_major_8400/main/ldeff} \\
+\bottomrule
+\end{tabular}
 \end{table}
-
-As summarized in Table~\ref{tab:dram_traffic}, kernel fusion yields an idealized $\frac{111P}{15P} \approx \mathbf{7.4\times}$ reduction in global memory traffic.
-
-\subsection{Kernel 1: 1D Vectorized Preprocessor}
-Our fused Triton preprocessing kernel maps total pixels $P = H \times W$ onto a 1D linear grid. Thread blocks of size $B = 1024$ load contiguous strided 8-bit memory vectors, convert to single-precision floating point in registers, compute arithmetic normalizations across all 3 channels, and write planar CHW slices directly to global pointers with coalesced 128-byte transactions. All end-to-end pipeline evaluations use FP32 preprocessing to preserve strict numerical equivalence; FP16 is benchmarked strictly as an isolated kernel throughput alternative in Figure~\ref{fig:isolated_speedup}.
-
-\subsection{Kernel 2: Fused Candidate Compaction}
-For dense object proposals $P \in \mathbb{R}^{N \times (4+C)}$ ($N=8400, C=80$), Kernel 2 assigns each proposal to a thread. Class scores are reduced in register space to locate $s_i^* = \max_{k} S_{i,k}$ and $k_i^* = \arg\max_k S_{i,k}$. Threads evaluate predicate $m_i = \mathbb{I}(s_i^* \ge \tau)$, writing surviving bounding boxes, scores, and class labels contiguously.
-
-\subsection{L2 Cache Eviction Protocol \& Benchmarking Rigor}
-Hardware GPU timing is recorded using \texttt{torch.cuda.Event(enable\_timing=True)} across 500 timed iterations following 50 warmup iterations. An active 64 MB tensor zero-fill eviction protocol is executed between iterations to mitigate resident cache-line reuse across benchmark runs. TorchInductor baselines are fully pre-compiled and warmed up prior to timing. Reported latencies represent median values across 5 independent benchmark sessions; run-to-run variance remained within $\pm 1.8\%$ across all configurations.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.98\linewidth]{figures/fig_isolated_speedup.pdf}
-\caption{Isolated preprocessing operator latency comparison across resolutions under active 64MB L2 eviction protocol.}
-\label{fig:isolated_speedup}
+\includegraphics[width=\linewidth]{figures/fig_ncu_stalls.pdf}
+\caption{Warp-stall breakdown from Nsight Compute (top reasons; rest grouped as ``other'').}
+\label{fig:stalls}
 \end{figure}
 
-\section{Empirical Evaluation \& Architectural Analysis}
-\noindent\textbf{Hardware Testbed.} All experiments are executed on an NVIDIA GeForce RTX 4050 Laptop GPU (Ada Lovelace, \texttt{sm\_89}, 6 GB GDDR6, 96-bit bus, $192.0\text{ GB/s}$ theoretical peak bandwidth, 32 MB L2 cache) under Ubuntu 22.04 LTS via WSL2. Runtimes include CUDA 12.1, PyTorch 2.5.1, and Triton 3.1.0. Workloads evaluate representative inspection models (mock Autoencoder and YOLO nano architectures) using deterministic fixtures.
+\subsection{Candidate filter}
+On the real 640$\times$640 output (\res{filter/640/cands} candidates, \res{filter/640/kept} kept), the
+fused filter takes \res{filter/640/triton/warm/host}\,\textmu s of host latency against
+\res{filter/640/eager/warm/host}\,\textmu s for eager and \res{filter/640/compiled/warm/host}\,\textmu s
+for Inductor (warm L2), a \res{filter/640/warm/host_speedup_vs_eager}$\times$ reduction. At
+1280$\times$1280 (\res{filter/1280/cands} candidates) the reduction is
+\res{filter/1280/warm/host_speedup_vs_eager}$\times$. The kernel itself runs for
+\res{filter/640/triton_kernel_only/warm/dev}\,\textmu s on the GPU. Launching it from Python without
+any synchronization still costs \res{filter/640/triton_kernel_only/warm/host}\,\textmu s of host
+latency, so the filter's remaining cost is dispatch and the one unavoidable read-back, not GPU work.
+Reading YOLOv8's native channels-first layout matters: on the row-major $[N, 84]$ layout the same
+kernel is \res{filter/640/warm/layout_ratio}$\times$ slower (warm) because class loads are strided.
 
-\subsection{Isolated Kernel Acceleration}
-Figure~\ref{fig:isolated_speedup} and Table~\ref{tab:pre_isolated} present isolated preprocessing latencies. Fused Triton FP32 achieves a $4.50\times$ speedup at $256\times 256$ ($8.2\,\mu\text{s}$ vs $36.9\,\mu\text{s}$) over PyTorch eager, comparable to TorchInductor ($\approx 8.2\,\mu\text{s}$), and reaches $153.4\text{ GB/s}$ effective bandwidth ($79.9\%$ of theoretical peak) on HD $1280\times 720$ streams. For candidate filtering ($N=8400$), Kernel 2 achieves $26.4\text{ M cand/s}$ throughput, compacting 8,400 proposals down to 15 defect candidates ($560\times$ compaction).
-
-\begin{table}[t]
+\subsection{End-to-end pipelines}
+\begin{figure*}[t]
 \centering
-\caption{Isolated Preprocessing Latency (Active 64MB L2 Eviction).}
-\label{tab:pre_isolated}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lcccc@{}}
-\toprule
-\textbf{Resolution} & \textbf{Eager p50} & \textbf{Triton 1D (FP32)} & \textbf{Bandwidth} & \textbf{Speedup} \\ \midrule
-$256 \times 256$ & $36.9\,\mu\text{s}$ & $\mathbf{8.2\,\mu\text{s}}$ & $120.0\text{ GB/s}$ & $\mathbf{4.50\times}$ \\
-$640 \times 640$ & $110.6\,\mu\text{s}$ & $\mathbf{46.1\,\mu\text{s}}$ & $133.3\text{ GB/s}$ & $\mathbf{2.40\times}$ \\
-$1280 \times 720$ & $281.6\,\mu\text{s}$ & $\mathbf{90.1\,\mu\text{s}}$ & $153.4\text{ GB/s}$ & $\mathbf{3.12\times}$ \\ \bottomrule
-\end{tabular}%
-}
-\end{table}
+\includegraphics[width=\textwidth]{figures/fig_pipelines.pdf}
+\caption{End-to-end host latency per frame (bar: p50, whisker: p95). Labels give the backend of each
+stage (E: eager, C: TorchInductor, T: Triton); ``graph'' marks CUDA-graph capture.}
+\label{fig:pipes}
+\end{figure*}
 
-\subsection{Micro-Architectural Nsight Compute Analysis}
-Table~\ref{tab:ncu_metrics} reports hardware performance counters extracted via Nsight Compute CLI.
-
-\begin{table}[t]
+\begin{figure*}[t]
 \centering
-\caption{Nsight Compute Hardware Profiling ($640\times 640$).}
-\label{tab:ncu_metrics}
-\resizebox{\columnwidth}{!}{%
-\setlength{\tabcolsep}{3.5pt}
-\begin{tabular}{@{}lcccc@{}}
-\toprule
-\textbf{Metric (Nsight Compute)} & \textbf{Triton 1D} & \textbf{Triton 2D} & \textbf{Candidate} & \textbf{Eager} \\ \midrule
-Duration & $\mathbf{47.6\,\mu\text{s}}$ & $239.6\,\mu\text{s}$ & $371.7\,\mu\text{s}$ & $111.6\,\mu\text{s}$ \\
-Active Warp Occupancy & $\mathbf{78.4\%}$ & $28.1\%$ & $64.5\%$ & $82.0\%$ \\
-Registers / Thread & $\mathbf{24}$ & $42$ & $32$ & $16$ \\
-DRAM Throughput (\% Peak) & $\mathbf{67.2\%}$ & $22.4\%$ & $41.8\%$ & $54.1\%$ \\
-L1 Hit Rate & $\mathbf{92.1\%}$ & $48.3\%$ & $88.6\%$ & $72.0\%$ \\
-Dominant Warp Issue Stall & Mem Throttle & Long Scoreboard & Short Scoreboard & Launch / BW \\ \bottomrule
-\end{tabular}%
-}
-\end{table}
+\includegraphics[width=\textwidth]{figures/fig_stages.pdf}
+\caption{Detection pipeline per-stage p50: host latency (solid) vs device time (hatched). Labels as in
+Figure~\ref{fig:pipes}.}
+\label{fig:stages}
+\end{figure*}
 
-\subsection{Negative Study: 2D Spatial Tiling Analysis}
-A 2D spatial block-tiled kernel ($16\times 16$ tile) was authored as an intuitive baseline. However, as illustrated in Figure~\ref{fig:stall_breakdown} and Table~\ref{tab:ncu_metrics}, 2D index arithmetic increased register allocation to \textbf{42 registers/thread}, constraining active warp occupancy to \textbf{$28.1\%$}. 
+Figure~\ref{fig:pipes} shows end-to-end latency. In the anomaly pipeline, replacing eager
+preprocessing with the Triton kernel changes p50 latency by
+\res{pipe/anomaly/pre=triton,model=eager/gain}\% (positive means faster), within the
+\res{pipe/anomaly/pre=eager,model=eager/spread}--\res{pipe/anomaly/pre=triton,model=eager/spread}\%
+spread of block medians. In the detection pipeline, using both kernels changes it by
+\res{pipe/detection/pre=triton,model=eager,filter=triton/gain}\%. Figure~\ref{fig:stages} explains
+why: YOLOv8n inference takes \res{pipe/detection/pre=eager,model=eager,filter=eager/inference/host}\,\textmu s
+of host latency but only \res{pipe/detection/pre=eager,model=eager,filter=eager/inference/dev}\,\textmu s
+on the GPU. The pipeline is bound by launching the model's kernels, and preprocessing and filtering
+together are a small fraction of the frame. Compiling the model with TorchInductor reduces detection
+latency by \res{pipe/detection/pre=compiled,model=compiled,filter=compiled/gain}\%. Capturing H2D,
+preprocessing and the model in one CUDA graph reduces it by
+\res{pipe/detection/pre=eager,model=eager,filter=eager,cuda-graph/gain}\% with eager kernels and
+\res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/gain}\% with both Triton kernels
+(p50 \res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/e2ems}\,ms). The anomaly
+pipeline shows the same pattern: a CUDA graph reduces latency by
+\res{pipe/anomaly/pre=eager,model=eager,cuda-graph/gain}\% (eager preprocessing) and
+\res{pipe/anomaly/pre=triton,model=eager,cuda-graph/gain}\% (Triton). Once launches are removed,
+the custom kernels become visible: with CUDA graphs, the Triton configuration is
+\res{pipe/detection/graph_triton_vs_eager}\% faster than the eager one for detection, where the
+fused filter's saving falls outside the graph, and \res{pipe/anomaly/graph_triton_vs_eager}\% faster
+for the anomaly pipeline. These differences are smaller than the block spread of the non-graph
+configurations, but graph replay is far more stable
+(\res{pipe/detection/pre=triton,model=eager,filter=triton,cuda-graph/spread}\% block spread).
 
-Furthermore, 2D index decomposition disrupted contiguous strided memory access across the interleaved HWC memory layout, producing less favorable memory-access behavior and triggering \textbf{$58.9\%$ Long Scoreboard stalls} (threads stalled awaiting asynchronous global DRAM loads). This produced a \textbf{$5.03\times$ slowdown} ($239.6\,\mu\text{s}$ vs $47.6\,\mu\text{s}$).
+\section{Discussion}
+\label{sec:discussion}
+\noindent\textbf{Where fusion pays.} The fused kernels remove most of the GPU work of their stages; at
+1080p the preprocessing kernel sustains \res{ncu/preprocess_triton_1920x1080/main/dram}\% of peak DRAM
+throughput under Nsight Compute. But at batch 1 on this system, the GPU
+time they save is microseconds, while each Python-level dispatch costs tens of microseconds and the
+model launches hundreds of kernels. Removing launches (CUDA graphs, model compilation) therefore
+dominates. A custom kernel is most useful where the compiler cannot reach it (data-dependent
+compaction, as in Kernel~2) or inside a graph-captured or C++ runtime, where its smaller GPU time is
+no longer hidden behind dispatch.
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.98\linewidth]{figures/fig_stall_breakdown.pdf}
-\caption{Micro-architectural warp stall breakdown comparing 1D vectorized execution vs. 2D spatial block-tiling on Ada Lovelace.}
-\label{fig:stall_breakdown}
-\end{figure}
+\noindent\textbf{Measurement pitfalls.} Three effects changed conclusions while this study was
+being done. First, any synchronization inside a timed region (here an innocuous \texttt{.tolist()})
+turns kernel timing into host-latency timing for one side of a comparison only. Second, a cache-flush
+kernel placed before each timed call also hides launch overhead behind the flush, so ``isolated''
+GPU times silently exclude dispatch. Third, the common write-based flush (\texttt{zero\_()}) leaves
+the L2 full of dirty lines: the 1080p preprocessing kernel writes \res{ncu/preprocess_triton_1920x1080/main/wrmb}\,MB
+to DRAM during its own execution under Nsight Compute, but under a write-based flush it must also
+evict up to \res{env/l2_cache_mb}\,MB of unrelated dirty data, a cost comparable to the kernel's own
+runtime. With that flush the 1D and 2D kernels measured equally fast at 1080p, although Nsight Compute
+shows a clear gap. We now flush by reading, report both device time and host latency, verify outputs before timing,
+and generate every published number from stored results. A fourth pitfall concerns correctness: PyTorch~\res{env/torch}'s TorchDynamo mis-traces the
+\texttt{y.extend(m(y[-1]) for m in ...)} pattern in Ultralytics' \texttt{C2f}/\texttt{SPPF} blocks, so a
+\texttt{torch.compile}d YOLOv8n returned wrong boxes without any error. We rewrite those methods
+as explicit loops and test bit-exact agreement with eager.
 
-\subsection{Dual-Perspective End-to-End Latency Evaluation}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.98\linewidth]{figures/fig_stage_breakdown.pdf}
-\caption{Stage-by-stage latency breakdown and Amdahl retention for $256\times 256$ Anomaly Inspection pipeline under pinned memory DMA.}
-\label{fig:stage_breakdown}
-\end{figure}
-
-\begin{table}[t]
-\centering
-\caption{Empirical Stage Breakdown ($256\times 256$ Anomaly).}
-\label{tab:stage_breakdown}
-\resizebox{\columnwidth}{!}{%
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lcccc@{}}
-\toprule
-\textbf{Stage Name} & \textbf{Eager ($\mu\text{s}$)} & \textbf{Share} & \textbf{Triton ($\mu\text{s}$)} & \textbf{Share} \\ \midrule
-01\_H2D (Pinned) & $30.7$ & $3.5\%$ & $30.7$ & $3.5\%$ \\
-02\_Preprocess & $82.8$ & $9.3\%$ & $\mathbf{62.5}$ & $\mathbf{7.2\%}$ \\
-03\_Inference & $534.5$ & $60.2\%$ & $534.5$ & $61.6\%$ \\
-04\_Postprocess & $240.0$ & $27.0\%$ & $240.0$ & $27.7\%$ \\ \midrule
-\textbf{Total Stage Time} & $\mathbf{888.0}$ & $\mathbf{100\%}$ & $\mathbf{867.7}$ & $\mathbf{100\%}$ \\ \bottomrule
-\end{tabular}%
-}
-\end{table}
-
-\noindent\textbf{Stage Breakdown \& Amdahl Quantification.} In Figure~\ref{fig:stage_breakdown} and Table~\ref{tab:stage_breakdown}, CUDA event profiling isolates pure GPU execution. Accelerated preprocessing reduces stage latency from $82.8\,\mu\text{s}$ to $62.5\,\mu\text{s}$ ($S_{\text{opt}} = 1.325\times$). Under Amdahl's Law:
-\begin{equation}
-S_{\text{total}} = \frac{1}{(1 - f) + \frac{f}{S_{\text{opt}}}}
-\end{equation}
-where preprocessing fraction $f = \frac{82.8}{888.0} \approx 0.0932$. The theoretical total pure-device speedup is:
-\begin{equation}
-S_{\text{total}} = \frac{888.0}{(888.0 - 82.8) + 62.5} = \frac{888.0}{867.7} \approx 1.0234\times\text{ (+2.3\%)}
-\end{equation}
-matching our empirical pure-device reduction ($888.0\,\mu\text{s} \to 867.7\,\mu\text{s}$).
-
-\noindent\textbf{Application Loop Latency.} When measuring complete end-to-end Python application execution under \texttt{@torch.inference\_mode()}, the Anomaly pipeline improves from $0.783\text{ ms}$ to $\mathbf{0.693\text{ ms}}$ (\textbf{+11.5\% E2E Speedup}). For YOLO Detection ($640\times 640$), latency improves from $2.173\text{ ms}$ to $\mathbf{1.907\text{ ms}}$ (\textbf{+12.3\% E2E Speedup}, saving $266\,\mu\text{s}$ per frame). The divergence between pure-GPU gains ($+2.3\%$) and application-loop gains ($+11.5\%$) reflects the elimination of intermediate PyTorch ATen driver dispatches and tensor allocations.
-
-\section{Discussion \& Systems Insights}
-\noindent\textbf{5.1 Implications for Edge Inspection Systems.} For single-stream inspection pipelines operating at 30--60 FPS, an 11--12\% end-to-end latency reduction provides valuable scheduling headroom. Freeing $266\,\mu\text{s}$ per frame may facilitate multi-stream camera multiplexing, though multi-camera scaling requires independent evaluation of video decode throughput, host memory bandwidth, and thermal throttling.
-
-\noindent\textbf{5.2 Architectural Generalizability.} While quantitative latencies reflect the RTX 4050 physical memory configuration ($192.0\text{ GB/s}$), the qualitative architectural principles—the $7.4\times$ global memory footprint reduction, the necessity of contiguous 128-byte DRAM transactions, and register-pressure-driven occupancy collapse—generalize across NVIDIA Ampere, Ada Lovelace, and Blackwell architectures.
-
-\noindent\textbf{5.3 Scope Disclosures \& Limitations.} This case study evaluates system-level execution characteristics on representative workloads (mock Autoencoder and YOLO nano) with deterministic fixtures without modifying neural network weights (no INT8 quantization or TensorRT graph compilation); it does not evaluate defect-detection accuracy on live industrial datasets or certify factory deployment suitability.
-
-\noindent\textbf{5.4 Future Work.} Future directions include integrating bilinear interpolation into the fused layout kernel and packaging custom Triton operators as native C++ TensorRT \texttt{IPluginV2DynamicExt} plugins to eliminate host dispatch bubbles completely.
+\noindent\textbf{Limitations.} One laptop GPU under WSL2, whose clocks and scheduler add variance
+(we report block spreads); batch~1 only; FP32 models with cuDNN's default TF32 convolutions; no
+TensorRT or Jetson evaluation; latency only, no accuracy.
 
 \section{Conclusion}
-This paper presented a profiling-driven micro-architectural case study of batch-1 edge vision inference on Ada Lovelace. Custom Triton operators reduced idealized global memory traffic by $7.4\times$, achieving up to a $4.50\times$ isolated speedup and an $11.5\text{--}12.3\%$ application loop latency gain. Our micro-architectural negative study demonstrated that linearized 1D memory access avoids the register pressure and memory stall penalties of 2D block-tiling.
+On an RTX~4050 Laptop GPU, fused Triton kernels for batch-1 preprocessing and YOLO candidate
+filtering are much faster than PyTorch eager on the GPU, match or beat TorchInductor for
+preprocessing (up to \res{pre/speedup_vs_compiled/max}$\times$), and halve the filter's host latency.
+Yet in eager pipelines they do not measurably change end-to-end latency, which is set by kernel-launch
+overhead: CUDA graphs reduce it by about half, and only then do the custom kernels add a few percent. Pipeline
+optimization at batch~1 should start by removing launches and synchronizations, and every speedup
+claim should state which of device time or host latency it measures.
 
-\let\oldbibliography\thebibliography
-\renewcommand{\thebibliography}[1]{%
-  \oldbibliography{#1}%
-  \setlength{\itemsep}{0pt}%
-  \setlength{\parskip}{0pt}%
-}
 \footnotesize
 \bibliographystyle{IEEEtran}
 \bibliography{references}

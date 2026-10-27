@@ -1,41 +1,26 @@
 #!/usr/bin/env bash
-set -e
+# Builds paper/main.pdf and an arXiv/Overleaf source archive (paper/build/arxiv.zip).
+# Run `make report figures` first so paper/generated/ and paper/figures/ match results/.
+set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ -f "/home/sengar/dev/.venv/bin/activate" ]; then
-    source /home/sengar/dev/.venv/bin/activate
+if ! command -v pdflatex >/dev/null 2>&1; then
+    echo "pdflatex not found; install a TeX distribution (e.g. texlive-latex-extra)." >&2
+    exit 1
 fi
 
-echo "=== 1. Verifying Evidence Integrity ==="
-python3 ../scripts/verify_evidence_integrity.py
-
-echo "=== 2. Generating Publication Vector Figures ==="
-python3 generate_figures.py
-
-if command -v pdflatex &> /dev/null; then
-    echo "=== 3. Compiling Research Paper PDF ==="
-    pdflatex -interaction=nonstopmode main.tex
-    bibtex main || true
-    pdflatex -interaction=nonstopmode main.tex
-    pdflatex -interaction=nonstopmode main.tex
-    echo "[✓] Research paper successfully compiled: paper/main.pdf"
-else
-    echo "[!] pdflatex not found on host. Vector figures, LaTeX source, and references written cleanly."
+mkdir -p build
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory build main.tex >/dev/null
+(cd build && BIBINPUTS=.. bibtex main >/dev/null)
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory build main.tex >/dev/null
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory build main.tex >/dev/null
+if grep -E "undefined|Citation .* undefined|\?\?" build/main.log | grep -v "^Package rerunfilecheck" ; then
+    echo "LaTeX reported undefined references or result keys (see above)." >&2
+    exit 1
 fi
+cp build/main.pdf main.pdf
+echo "[built] paper/main.pdf"
 
-echo "=== 4. Packaging Clean Overleaf / arXiv Archive ==="
-python3 -c "
-import zipfile, os
-for zip_path in ['paper_camera_ready.zip', 'paper.zip']:
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
-        for f in ['main.tex', 'references.bib', 'build_paper.sh', 'generate_figures.py']:
-            if os.path.exists(f):
-                z.write(f, f)
-        if os.path.exists('figures'):
-            for fig in sorted(os.listdir('figures')):
-                if fig.endswith('.pdf'):
-                    z.write(os.path.join('figures', fig), os.path.join('figures', fig))
-    print(f'[✓] Successfully packaged: paper/{zip_path}')
-"
+rm -f build/arxiv.zip
+zip -q -r build/arxiv.zip main.tex references.bib generated/results.tex figures/*.pdf build/main.bbl
+echo "[built] paper/build/arxiv.zip"

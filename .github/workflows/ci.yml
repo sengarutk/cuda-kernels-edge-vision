@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpu:
+    # GitHub-hosted runners have no GPU: CUDA tests skip automatically, and this job checks
+    # the CPU reference implementations, the profiler parser, and that every generated
+    # document still matches results/*.json.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install CPU dependencies
+        run: |
+          pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install triton==3.1.0 numpy==2.2.6 pyyaml tabulate pillow pytest
+      - name: Tests (GPU tests skipped)
+        run: python -m pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+      - name: Generated report is up to date
+        run: python scripts/render_report.py --check

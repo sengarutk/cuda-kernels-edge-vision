@@ -1,114 +1,166 @@
-import os
+"""Builds the paper figures from results/*.json (no hard-coded measurements)."""
+import json
+from pathlib import Path
+
 import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+RESULTS = ROOT / "results"
+OUT = ROOT / "paper" / "figures"
 
 plt.rcParams.update({
-    'font.family': 'serif',
-    'font.size': 8.0,
-    'axes.labelsize': 8.0,
-    'axes.titlesize': 8.5,
-    'xtick.labelsize': 7.5,
-    'ytick.labelsize': 7.5,
-    'legend.fontsize': 6.5,
-    'text.usetex': False,
-    'mathtext.fontset': 'dejavuserif',
+    "font.family": "serif", "font.size": 7.5, "axes.labelsize": 7.5, "axes.titlesize": 8,
+    "xtick.labelsize": 7, "ytick.labelsize": 7, "legend.fontsize": 6.5,
+    "axes.spines.top": False, "axes.spines.right": False, "pdf.fonttype": 42,
 })
+# Colorblind-safe palette (Okabe-Ito).
+C = {"eager": "#999999", "compiled": "#E69F00", "triton": "#0072B2", "triton2d": "#56B4E9",
+     "fp16": "#009E73", "graph": "#CC79A7"}
 
-os.makedirs('paper/figures', exist_ok=True)
 
-# -------------------------------------------------------------
-# Figure 1: Isolated Preprocessing Speedup
-# -------------------------------------------------------------
-resolutions = ['256x256\n(Anomaly)', '640x640\n(Detection)', '1280x720\n(HD Stream)']
-eager = [36.9, 110.6, 281.6]
-inductor = [8.2, 37.9, 81.8]
-triton_1d = [8.2, 46.1, 90.1]
-triton_fp16 = [7.2, 29.2, 58.4]
+def load(name):
+    return json.loads((RESULTS / f"{name}.json").read_text())
 
-x = np.arange(len(resolutions))
-width = 0.2
 
-fig, ax = plt.subplots(figsize=(3.25, 1.95), dpi=300)
-ax.bar(x - 1.5*width, eager, width, label='PyTorch Eager', color='#4A5568', edgecolor='black', linewidth=0.5)
-ax.bar(x - 0.5*width, inductor, width, label='TorchInductor', color='#718096', edgecolor='black', linewidth=0.5)
-ax.bar(x + 0.5*width, triton_1d, width, label='Triton FP32', color='#2B6CB0', edgecolor='black', linewidth=0.5)
-ax.bar(x + 1.5*width, triton_fp16, width, label='Triton FP16', color='#319795', edgecolor='black', linewidth=0.5)
+RES_LABELS = {"256x256": "256²", "640x640": "640²", "1280x720": "720p", "1920x1080": "1080p",
+              "3840x2160": "4K"}
 
-ax.set_ylabel('Latency (µs)')
-ax.set_title('Isolated Preprocess Latency (Active 64MB L2 Eviction)', pad=6)
-ax.set_xticks(x)
-ax.set_xticklabels(resolutions)
-ax.set_ylim(0, 320)
-ax.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.9, edgecolor='#CBD5E0')
-ax.grid(axis='y', linestyle='--', alpha=0.5)
 
-for i in range(len(resolutions)):
-    sp = eager[i] / triton_1d[i]
-    ax.annotate(f'{sp:.1f}x', xy=(x[i] + 0.5*width, triton_1d[i]),
-                xytext=(0, 2), textcoords='offset points', ha='center', va='bottom', fontsize=6.8, fontweight='bold', color='#1A365D')
+def short(config: str) -> str:
+    """'pre=triton, model=eager, filter=triton, cuda-graph' -> 'pre T · model E · filter T · graph'."""
+    abbrev = {"eager": "E", "compiled": "C", "triton": "T"}
+    parts = []
+    for item in config.split(", "):
+        if "=" in item:
+            key, value = item.split("=")
+            parts.append(f"{key} {abbrev.get(value, value)}")
+        else:
+            parts.append("graph")
+    return " · ".join(parts)
 
-plt.savefig('paper/figures/fig_isolated_speedup.pdf', bbox_inches='tight', pad_inches=0.04)
-plt.close()
-print('[✓] Saved paper/figures/fig_isolated_speedup.pdf')
 
-# -------------------------------------------------------------
-# Figure 2: Stage-by-Stage Latency Breakdown (External Bottom Legend)
-# -------------------------------------------------------------
-labels = ['Eager', 'Triton']
-h2d = np.array([30.7, 30.7])
-prep = np.array([82.8, 62.5])
-inf = np.array([534.5, 534.5])
-post = np.array([240.0, 240.0])
+def fig_preprocess():
+    res = load("preprocess")["results"]
+    get = {(r["resolution"], r["method"]): r["device_us"]["p50"] for r in res}
+    rz = list(dict.fromkeys(r["resolution"] for r in res))
+    methods = [("eager_fp32", "Eager", C["eager"]), ("compiled_fp32", "Inductor", C["compiled"]),
+               ("triton_fp32", "Triton 1D", C["triton"]), ("triton_2d_fp32", "Triton 2D", C["triton2d"]),
+               ("triton_fp16", "Triton 1D FP16", C["fp16"])]
+    x = np.arange(len(rz))
+    w = 0.16
+    fig, ax = plt.subplots(figsize=(3.4, 1.9))
+    for i, (m, label, color) in enumerate(methods):
+        ax.bar(x + (i - 2) * w, [get[(r, m)] for r in rz], w, label=label, color=color, edgecolor="none")
+    ax.set_yscale("log")
+    ax.set_ylabel("Device time, p50 (µs)")
+    ax.set_xticks(x)
+    ax.set_xticklabels([RES_LABELS.get(r, r) for r in rz])
+    ax.grid(axis="y", which="major", linewidth=0.4, alpha=0.5)
+    ax.legend(ncol=3, frameon=False, loc="upper left", bbox_to_anchor=(0, 1.22))
+    fig.savefig(OUT / "fig_preprocess.pdf", bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
 
-fig, ax = plt.subplots(figsize=(3.25, 2.25), dpi=300)
-x_pos = np.arange(len(labels))
-bar_width = 0.36
 
-ax.bar(x_pos, h2d, bar_width, label='01_H2D (DMA)', color='#CBD5E0', edgecolor='black', linewidth=0.5)
-ax.bar(x_pos, prep, bar_width, bottom=h2d, label='02_Preprocess', color='#3182CE', edgecolor='black', linewidth=0.5)
-ax.bar(x_pos, inf, bar_width, bottom=h2d + prep, label='03_Model Inf.', color='#4A5568', edgecolor='black', linewidth=0.5)
-ax.bar(x_pos, post, bar_width, bottom=h2d + prep + inf, label='04_Postprocess', color='#ED8936', edgecolor='black', linewidth=0.5)
+def _color(config):
+    if "cuda-graph" in config:
+        return C["graph"]
+    if "triton" in config:
+        return C["triton"]
+    if "compiled" in config:
+        return C["compiled"]
+    return C["eager"]
 
-totals = h2d + prep + inf + post
-for i in range(len(labels)):
-    ax.text(x_pos[i], totals[i] + 25, f'{totals[i]:.1f} µs', ha='center', va='bottom', fontweight='bold', fontsize=7.5, color='#1A202C')
 
-ax.set_ylabel('Time (µs)')
-ax.set_title('Stage Breakdown & Amdahl Retention', pad=6)
-ax.set_xticks(x_pos)
-ax.set_xticklabels(labels)
-ax.set_ylim(0, 1050)
-ax.grid(axis='y', linestyle='--', alpha=0.5)
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.20), ncol=2, frameon=True, facecolor='white', framealpha=0.9, edgecolor='#CBD5E0')
+def fig_pipelines():
+    data = load("pipelines")["results"]
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.2))
+    for ax, kind, title in ((axes[0], "anomaly", "Anomaly (256×256 autoencoder)"),
+                            (axes[1], "detection", "Detection (640×640 YOLOv8n + NMS)")):
+        entries = data[kind]
+        names = [short(e["config"]) for e in entries]
+        p50 = np.array([e["e2e_host_us"]["p50"] for e in entries]) / 1000
+        p95 = np.array([e["e2e_host_us"]["p95"] for e in entries]) / 1000
+        y = np.arange(len(entries))[::-1]
+        ax.barh(y, p50, color=[_color(e["config"]) for e in entries], height=0.7)
+        ax.errorbar(p50, y, xerr=[np.zeros_like(p50), p95 - p50], fmt="none", ecolor="black",
+                    elinewidth=0.5, capsize=1.5)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=6.5)
+        ax.set_title(title, loc="left")
+        ax.set_xlabel("End-to-end host latency (ms): bar p50, whisker p95")
+        ax.grid(axis="x", linewidth=0.4, alpha=0.5)
+    fig.tight_layout(w_pad=1.5)
+    fig.savefig(OUT / "fig_pipelines.pdf", bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
 
-plt.savefig('paper/figures/fig_stage_breakdown.pdf', bbox_inches='tight', pad_inches=0.04)
-plt.close()
-print(f'[✓] Saved paper/figures/fig_stage_breakdown.pdf (Eager: {totals[0]:.1f} µs, Triton: {totals[1]:.1f} µs)')
 
-# -------------------------------------------------------------
-# Figure 3: Warp Stall Breakdown
-# -------------------------------------------------------------
-stall_types = ['Mem Throttle', 'Long Scoreboard', 'Short Scoreboard', 'Executing', 'Other']
-triton_1d_stalls = [34.2, 12.1, 18.4, 25.1, 10.2]
-triton_2d_stalls = [6.4, 58.9, 12.0, 8.5, 14.2]
+def fig_stages():
+    entries = [e for e in load("pipelines")["results"]["detection"] if e["stages"]]
+    stages = list(entries[0]["stages"])
+    colors = ["#CCCCCC", "#0072B2", "#555555", "#E69F00", "#CC79A7"]
+    fig, ax = plt.subplots(figsize=(7.0, 2.1))
+    y = np.arange(len(entries))[::-1]
+    for mode, offset, hatch in (("host_us", 0.19, None), ("device_us", -0.19, "////")):
+        left = np.zeros(len(entries))
+        for stage, color in zip(stages, colors):
+            vals = np.array([e["stages"][stage][mode]["p50"] for e in entries]) / 1000
+            ax.barh(y + offset, vals, 0.36, left=left, color=color, hatch=hatch, edgecolor="white",
+                    linewidth=0.3, label=stage if mode == "host_us" else None)
+            left += vals
+    ax.set_yticks(y)
+    ax.set_yticklabels([short(e["config"]) for e in entries], fontsize=6.5)
+    ax.set_xlabel("Per-stage p50 (ms): upper bar host latency, hatched bar device time")
+    ax.legend(ncol=5, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0))
+    ax.grid(axis="x", linewidth=0.4, alpha=0.5)
+    fig.savefig(OUT / "fig_stages.pdf", bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
 
-y = np.arange(len(stall_types))
-height = 0.35
 
-fig, ax = plt.subplots(figsize=(3.25, 1.95), dpi=300)
-ax.barh(y + height/2, triton_1d_stalls, height, label='Triton 1D (47.6 µs)', color='#2B6CB0', edgecolor='black', linewidth=0.5)
-ax.barh(y - height/2, triton_2d_stalls, height, label='Triton 2D (239.6 µs)', color='#E53E3E', edgecolor='black', linewidth=0.5)
+def fig_ncu_stalls():
+    path = RESULTS / "ncu_summary.json"
+    if not path.exists():
+        return
+    targets = json.loads(path.read_text())["targets"]
+    pairs = [("preprocess_triton_1920x1080", "Triton 1D"), ("preprocess_triton_2d_1920x1080", "Triton 2D"),
+             ("filter_triton_8400", "Filter [84,N]"), ("filter_triton_row_major_8400", "Filter [N,84]")]
+    pairs = [(t, label) for t, label in pairs if t in targets]
+    shares = {}
+    for t, label in pairs:
+        k = max(targets[t]["kernels"], key=lambda k: k["duration_us"])
+        shares[label] = k["stall_share_pct"]
+    reasons = []
+    for s in shares.values():
+        for r, v in sorted(s.items(), key=lambda kv: -kv[1])[:3]:
+            if r not in reasons:
+                reasons.append(r)
+    fig, ax = plt.subplots(figsize=(3.4, 1.7))
+    left = np.zeros(len(shares))
+    palette = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442"]
+    labels = list(shares)
+    for reason, color in zip(reasons, palette):
+        vals = np.array([shares[lbl].get(reason, 0.0) for lbl in labels])
+        ax.barh(labels[::-1], vals[::-1], left=left[::-1], color=color, label=reason.replace("_", " "), height=0.6)
+        left += vals
+    ax.barh(labels[::-1], (100 - left)[::-1], left=left[::-1], color="#DDDDDD", label="other", height=0.6)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("Share of stalled warps per issued instruction (%)")
+    ax.legend(ncol=3, frameon=False, loc="upper left", bbox_to_anchor=(0, 1.32))
+    fig.savefig(OUT / "fig_ncu_stalls.pdf", bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
 
-ax.set_xlabel('Active Warp Cycles (%)')
-ax.set_title('Warp Stall Comparison (sm_89)', pad=6)
-ax.set_yticks(y)
-ax.set_yticklabels(stall_types)
-ax.set_xlim(0, 70)
-ax.legend(loc='lower right', frameon=True, facecolor='white', framealpha=0.9, edgecolor='#CBD5E0')
-ax.grid(axis='x', linestyle='--', alpha=0.5)
 
-plt.savefig('paper/figures/fig_stall_breakdown.pdf', bbox_inches='tight', pad_inches=0.04)
-plt.close()
-print('[✓] Saved paper/figures/fig_stall_breakdown.pdf')
+def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+    fig_preprocess()
+    fig_pipelines()
+    fig_stages()
+    fig_ncu_stalls()
+    print("[saved] " + ", ".join(sorted(p.name for p in OUT.glob("*.pdf"))))
+
+
+if __name__ == "__main__":
+    main()

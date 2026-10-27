@@ -1,70 +1,64 @@
+"""Regenerates the committed test fixtures (deterministic).
+
+    python tests/fixtures/generate_fixtures.py          # images + expected outputs
+    python tests/fixtures/generate_fixtures.py --yolo   # also the YOLOv8n raw-output fixture
+"""
+import argparse
 import os
 import sys
 
-# Ensure repository root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import numpy as np
 import torch
-from src.baselines.preprocess_torch import preprocess_eager_gpu
+
 from src.baselines.preprocess_numpy import preprocess_numpy_cpu
 
-def generate_all_fixtures():
-    fixtures_dir = os.path.dirname(__file__)
-    expected_dir = os.path.join(fixtures_dir, "expected_outputs")
-    os.makedirs(expected_dir, exist_ok=True)
-    
+FIXTURES_DIR = os.path.dirname(os.path.abspath(__file__))
+EXPECTED_DIR = os.path.join(FIXTURES_DIR, "expected_outputs")
+MEAN = (0.485, 0.456, 0.406)
+STD = (0.229, 0.224, 0.225)
+
+
+def make_anomaly_image() -> np.ndarray:
+    """256x256 gradient texture with a saturated horizontal scratch defect."""
+    y, x = np.mgrid[0:256, 0:256]
+    img = np.stack([(x + y) % 256, (2 * x) % 256, (3 * y) % 256], axis=-1).astype(np.uint8)
+    img[120:135, 50:200, :] = 255
+    return img
+
+
+def generate_images() -> None:
+    os.makedirs(EXPECTED_DIR, exist_ok=True)
+    img_256 = make_anomaly_image()
+    np.save(os.path.join(FIXTURES_DIR, "image_256_uint8.npy"), img_256)
     np.random.seed(42)
-    torch.manual_seed(42)
-
-    # 1. Generate 256x256 uint8 Anomaly Inspection Image (with structured patterns & defects)
-    img_256 = np.zeros((256, 256, 3), dtype=np.uint8)
-    # Background texture gradient
-    for y in range(256):
-        for x in range(256):
-            img_256[y, x, 0] = (x + y) % 256
-            img_256[y, x, 1] = (2 * x) % 256
-            img_256[y, x, 2] = (3 * y) % 256
-    # Artificial scratch defect
-    img_256[120:135, 50:200, :] = 255
-    np.save(os.path.join(fixtures_dir, "image_256_uint8.npy"), img_256)
-    print("[✓] Generated image_256_uint8.npy")
-
-    # 2. Generate 640x640 uint8 Detection Image
     img_640 = np.random.randint(0, 256, (640, 640, 3), dtype=np.uint8)
-    np.save(os.path.join(fixtures_dir, "image_640_uint8.npy"), img_640)
-    print("[✓] Generated image_640_uint8.npy")
+    np.save(os.path.join(FIXTURES_DIR, "image_640_uint8.npy"), img_640)
+    for dtype, tag in ((np.float32, "fp32"), (np.float16, "fp16")):
+        expected = preprocess_numpy_cpu(img_256, MEAN, STD, dtype=dtype)
+        np.save(os.path.join(EXPECTED_DIR, f"expected_preprocessed_256_{tag}.npy"), expected)
+    print("[saved] image_256_uint8.npy, image_640_uint8.npy, expected_outputs/*.npy")
 
-    # 3. Generate Realistic YOLO Detection Candidates [1, 8400, 84]
-    # In industrial inspection, 99.8% of boxes are background (scores < 0.05), with ~10-15 true defects
-    raw_candidates = np.random.uniform(0.001, 0.04, (1, 8400, 84)).astype(np.float32)
-    # Box coordinates [cx, cy, w, h] in [0, 640]
-    raw_candidates[0, :, :4] = np.random.uniform(10.0, 630.0, (8400, 4))
-    
-    # Inject 12 high-confidence defect boxes
-    defect_indices = [42, 105, 512, 1024, 2048, 3100, 4200, 5500, 6200, 7100, 7800, 8350]
-    for idx in defect_indices:
-        target_class = (idx % 80)
-        raw_candidates[0, idx, 4 + target_class] = 0.88 + (idx % 10) * 0.01
 
-    yolo_tensor = torch.from_numpy(raw_candidates)
-    torch.save(yolo_tensor, os.path.join(fixtures_dir, "yolo_candidates_8400.pt"))
-    print("[✓] Generated yolo_candidates_8400.pt (with 12 validated defect proposals)")
+def generate_yolo() -> None:
+    """Raw YOLOv8n head output ([1, 84, 8400]) for the letterboxed bus.jpg frame, on CPU."""
+    from src.frames import detection_frame
+    from src.models.yolo import load_yolov8n
 
-    # 4. Generate Pre-computed Expected Outputs (FP32 & FP16)
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    
-    expected_fp32 = preprocess_numpy_cpu(img_256, mean, std, dtype=np.float32)
-    np.save(os.path.join(expected_dir, "expected_preprocessed_256_fp32.npy"), expected_fp32)
-    
-    expected_fp16 = preprocess_numpy_cpu(img_256, mean, std, dtype=np.float16)
-    np.save(os.path.join(expected_dir, "expected_preprocessed_256_fp16.npy"), expected_fp16)
-    print("[✓] Generated reference outputs in expected_outputs/")
+    model = load_yolov8n(torch.device("cpu"))
+    frame = torch.from_numpy(detection_frame(640))
+    x = frame.permute(2, 0, 1).float().div(255.0).unsqueeze(0).contiguous()
+    with torch.inference_mode():
+        preds = model(x).clone()
+    torch.save(preds, os.path.join(FIXTURES_DIR, "yolov8n_bus_raw_640.pt"))
+    print(f"[saved] yolov8n_bus_raw_640.pt {tuple(preds.shape)}")
+
 
 if __name__ == "__main__":
-    generate_all_fixtures()
-
-
-# Export alias for test suites and conftest
-generate_fixtures = generate_all_fixtures
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--yolo", action="store_true", help="also regenerate the YOLOv8n fixture")
+    args = parser.parse_args()
+    generate_images()
+    if args.yolo:
+        generate_yolo()

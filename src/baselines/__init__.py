@@ -4,6 +4,6 @@ from .postprocess_numpy import postprocess_detection_numpy
 from .postprocess_torch import (
     postprocess_detection_torch_eager,
     postprocess_detection_torch_compiled,
-    postprocess_detection_torch,
+    xywh_to_xyxy,
 )
 from .anomaly_baselines import compute_residual_map_torch, compute_anomaly_score_topk

@@ -1,65 +1,76 @@
+import numpy as np
 import pytest
 import torch
-import numpy as np
+
 from src.baselines.preprocess_torch import preprocess_eager_gpu
 from src.triton_kernels.fused_preprocess import fused_preprocess_triton
+from src.triton_kernels.fused_preprocess_2d import fused_preprocess_2d
+from tests.conftest import MEAN, STD
 
-@pytest.fixture
-def device():
-    return "cuda:0" if torch.cuda.is_available() else "cpu"
+pytestmark = pytest.mark.cuda
 
-@pytest.mark.parametrize("shape", [
-    (256, 256),
-    (640, 640),
-    (1280, 720),
-    (384, 512),  # Non-power-of-two
-    (100, 100),  # Small edge shape
-])
-def test_triton_fused_preprocess_correctness_fp32(shape, device):
-    H, W = shape
-    img = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8, device=device)
-    mean = torch.tensor([0.485, 0.456, 0.406], device=device)
-    std = torch.tensor([0.229, 0.224, 0.225], device=device)
+SHAPES = [(256, 256), (640, 640), (720, 1280), (1080, 1920), (384, 512), (100, 100), (1, 1), (17, 33)]
 
-    out_ref = preprocess_eager_gpu(img, mean, std, dtype=torch.float32)
-    out_triton = fused_preprocess_triton(img, mean, std, dtype=torch.float32)
 
-    assert out_triton.shape == (1, 3, H, W)
-    assert out_triton.dtype == torch.float32
-    assert out_triton.is_contiguous()
+def _ref(img, dtype=torch.float32):
+    return preprocess_eager_gpu(img, torch.tensor(MEAN, device="cuda"), torch.tensor(STD, device="cuda"), dtype)
 
-    # Numerical verification
-    max_abs_err = torch.max(torch.abs(out_ref - out_triton)).item()
-    mean_abs_err = torch.mean(torch.abs(out_ref - out_triton)).item()
-    
-    assert max_abs_err < 1e-5, f"Max abs error {max_abs_err} exceeded FP32 tolerance 1e-5"
-    assert mean_abs_err < 1e-6, f"Mean abs error {mean_abs_err} exceeded 1e-6"
 
-def test_triton_fused_preprocess_fp16(device):
-    img = torch.randint(0, 256, (256, 256, 3), dtype=torch.uint8, device=device)
-    mean = torch.tensor([0.485, 0.456, 0.406], device=device)
-    std = torch.tensor([0.229, 0.224, 0.225], device=device)
+@pytest.mark.parametrize("kernel", [fused_preprocess_triton, fused_preprocess_2d], ids=["1d", "2d"])
+@pytest.mark.parametrize("shape", SHAPES, ids=lambda s: f"{s[0]}x{s[1]}")
+def test_fp32_matches_eager(kernel, shape):
+    torch.manual_seed(0)
+    img = torch.randint(0, 256, (*shape, 3), dtype=torch.uint8, device="cuda")
+    out = kernel(img, MEAN, STD)
+    assert out.shape == (1, 3, *shape) and out.dtype == torch.float32 and out.is_contiguous()
+    torch.testing.assert_close(out, _ref(img), rtol=0, atol=2e-6)
 
-    out_ref = preprocess_eager_gpu(img, mean, std, dtype=torch.float16)
-    out_triton = fused_preprocess_triton(img, mean, std, dtype=torch.float16)
 
-    assert out_triton.dtype == torch.float16
-    max_abs_err = torch.max(torch.abs(out_ref - out_triton)).item()
-    # FP16 arithmetic drift across 3 un-fused operations vs single-pass FMA is within 2-3 ULPs
-    assert max_abs_err < 3e-3, f"Max abs error {max_abs_err} exceeded FP16 tolerance 3e-3"
+def test_matches_committed_numpy_reference(img_256, expected_256):
+    out = fused_preprocess_triton(torch.from_numpy(img_256).cuda(), MEAN, STD)
+    np.testing.assert_allclose(out.cpu().numpy(), expected_256["fp32"], rtol=0, atol=2e-6)
 
-def test_triton_boundary_values(device):
-    mean = torch.tensor([0.485, 0.456, 0.406], device=device)
-    std = torch.tensor([0.229, 0.224, 0.225], device=device)
 
-    # All-zero image
-    img_zeros = torch.zeros((256, 256, 3), dtype=torch.uint8, device=device)
-    out_zeros = fused_preprocess_triton(img_zeros, mean, std)
-    ref_zeros = preprocess_eager_gpu(img_zeros, mean, std)
-    torch.testing.assert_close(out_zeros, ref_zeros, atol=1e-5, rtol=1e-4)
+@pytest.mark.parametrize("kernel", [fused_preprocess_triton, fused_preprocess_2d], ids=["1d", "2d"])
+def test_tuple_list_and_tensor_params_agree(kernel):
+    img = torch.randint(0, 256, (64, 48, 3), dtype=torch.uint8, device="cuda")
+    assert torch.equal(kernel(img, MEAN, STD), kernel(img, list(MEAN), list(STD)))
+    # A tensor holds float32-rounded constants, so compare against those exact values.
+    mean_t, std_t = torch.tensor(MEAN, device="cuda"), torch.tensor(STD, device="cuda")
+    assert torch.equal(kernel(img, mean_t, std_t), kernel(img, tuple(mean_t.tolist()), tuple(std_t.tolist())))
 
-    # All-255 image
-    img_255 = torch.full((256, 256, 3), 255, dtype=torch.uint8, device=device)
-    out_255 = fused_preprocess_triton(img_255, mean, std)
-    ref_255 = preprocess_eager_gpu(img_255, mean, std)
-    torch.testing.assert_close(out_255, ref_255, atol=1e-5, rtol=1e-4)
+
+def test_fp16_output_rounds_fp32_result():
+    img = torch.randint(0, 256, (256, 256, 3), dtype=torch.uint8, device="cuda")
+    out16 = fused_preprocess_triton(img, MEAN, STD, torch.float16)
+    assert out16.dtype == torch.float16
+    # Triton computes in FP32 and rounds once at the store: exactly the FP32 result cast to FP16.
+    assert torch.equal(out16, fused_preprocess_triton(img, MEAN, STD).half())
+    # Eager FP16 rounds after every op; |values| < 4, so one FP16 ULP is at most 2^-9.
+    torch.testing.assert_close(out16.float(), _ref(img, torch.float16).float(), rtol=0, atol=2 * 2**-9)
+
+
+def test_non_contiguous_input():
+    base = torch.randint(0, 256, (128, 96, 3), dtype=torch.uint8, device="cuda")
+    img = base.transpose(0, 1)
+    assert not img.is_contiguous()
+    torch.testing.assert_close(fused_preprocess_triton(img, MEAN, STD), _ref(img.contiguous()), rtol=0, atol=2e-6)
+
+
+@pytest.mark.parametrize("value", [0, 255])
+def test_constant_images(value):
+    img = torch.full((256, 256, 3), value, dtype=torch.uint8, device="cuda")
+    torch.testing.assert_close(fused_preprocess_triton(img, MEAN, STD), _ref(img), rtol=0, atol=2e-6)
+
+
+def test_input_validation():
+    with pytest.raises(ValueError, match="CUDA"):
+        fused_preprocess_triton(torch.zeros((4, 4, 3), dtype=torch.uint8))
+    with pytest.raises(TypeError, match="uint8"):
+        fused_preprocess_triton(torch.zeros((4, 4, 3), device="cuda"))
+    with pytest.raises(ValueError, match=r"\[H, W, 3\]"):
+        fused_preprocess_triton(torch.zeros((4, 4, 4), dtype=torch.uint8, device="cuda"))
+    with pytest.raises(TypeError, match="float32 or float16"):
+        fused_preprocess_triton(torch.zeros((4, 4, 3), dtype=torch.uint8, device="cuda"), dtype=torch.bfloat16)
+    with pytest.raises(ValueError, match=r"\[H, W, 3\]"):
+        fused_preprocess_2d(torch.zeros((4, 4), dtype=torch.uint8, device="cuda"))
