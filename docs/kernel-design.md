@@ -50,8 +50,10 @@ contiguous runs are thus split into short segments. It uses the same parameter h
 > Earlier versions of this repository reported this variant as 5× slower because of register
 > pressure. That result was a measurement artifact: the 2D benchmark passed CUDA tensors for
 > `mean`/`std`, whose `.tolist()` forced a device synchronization inside the timed region,
-> while the 1D kernel received tuples. With identical dispatch, the measured gap is far smaller
-> and shrinks with resolution; see [results.md](results.md).
+> while the 1D kernel received tuples. With identical dispatch the gap is much smaller, and it
+> varies with resolution (largest at mid-size frames, near zero at 4K). Nsight Compute attributes
+> it to lower global-load sector efficiency and memory-instruction throttling, not to occupancy;
+> see [results.md](results.md).
 
 ## Kernel 2: fused candidate filter (`src/triton_kernels/candidate_filter.py`)
 

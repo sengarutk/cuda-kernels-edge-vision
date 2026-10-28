@@ -113,9 +113,10 @@ Measured on NVIDIA GeForce RTX 4050 Laptop GPU (sm_89, 24.0 MB L2), PyTorch 2.5.
 
 ```bash
 git clone https://github.com/sengarutk/cuda-kernels-edge-vision.git && cd cuda-kernels-edge-vision
-pip install -r requirements.txt && pip install --no-deps -e .
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+pip install --no-deps -e .
 make test      # GPU tests skip automatically without CUDA
-make bench     # ~25 min; writes results/*.json
+make bench     # ~10 min; writes results/*.json
 make ncu NCU=/path/to/ncu   # optional, needs GPU performance-counter access
 make report figures paper   # regenerate docs/results.md, README block, figures, paper/main.pdf
 make check     # fails if anything generated is stale
@@ -139,4 +140,4 @@ tests/        pytest suite and fixtures
 ## Citation
 
 Utkarsh Sengar, *When Does Kernel Fusion Help? A Measured Study of Batch-1 Edge Vision Pipelines on
-an RTX 4050 Laptop GPU*, IIT Dharwad, 2026. Source and paper: this repository.
+a Laptop GPU*, IIT Dharwad, 2026. Source and paper ([paper/main.pdf](paper/main.pdf)): this repository.

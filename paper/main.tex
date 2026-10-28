@@ -31,7 +31,7 @@ an RTX~4050 Laptop GPU. We separate \emph{device time} (GPU execution with launc
 from \emph{host latency} (what the application waits for). In isolation, the preprocessing kernel
 is \res{pre/speedup_vs_eager/min}--\res{pre/speedup_vs_eager/max}$\times$ faster than PyTorch eager
 on the GPU and \res{pre/speedup_vs_compiled/min}--\res{pre/speedup_vs_compiled/max}$\times$ as fast as
-TorchInductor, but a single call's host latency is dominated by dispatch. The fused filter cuts
+TorchInductor, but for small frames a single call's host latency is dominated by dispatch. The fused filter cuts
 host latency \res{filter/640/warm/host_speedup_vs_eager}$\times$ relative to eager
 (\res{filter/640/eager/warm/host} $\rightarrow$ \res{filter/640/triton/warm/host}\,\textmu s), yet its kernel accounts for only
 \res{filter/640/triton_kernel_only/warm/dev}\,\textmu s of that. End to end, swapping in either
