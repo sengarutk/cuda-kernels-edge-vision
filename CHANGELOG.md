@@ -59,6 +59,7 @@ all of them, fixes the measurement methodology and regenerates every number from
   and JSON results in `results/`.
 - **Profiling:** real Nsight Compute collection (`scripts/profile_ncu.sh`) and a CSV parser.
 - **Reporting:** `scripts/render_report.py` generates `docs/results.md`, the README results block
-  and the paper's numbers (`\res{...}` macros); `make check` fails on any drift.
+  and the paper's numbers (`\res{...}` macros). Figures and the paper PDF are reproducible byte for
+  byte, and `make check` (also run in CI) fails if the report or any figure is out of date.
 - **Tests:** rewritten to compare against references (NumPy, eager, committed fixtures, real YOLOv8n
   outputs); GPU tests skip cleanly on CPU-only machines; CI runs the CPU subset and the report check.

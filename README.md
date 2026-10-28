@@ -92,15 +92,17 @@ Measured on NVIDIA GeForce RTX 4050 Laptop GPU (sm_89, 24.0 MB L2), PyTorch 2.5.
 2. **At batch 1, dispatch hides most of it.** Launching any kernel from Python costs tens of
    microseconds, so for small frames a single preprocessing call's host latency barely changes, even
    though the GPU work shrinks several-fold. The fused YOLO filter cuts the filter's host latency
-   by about 1.5×, but its kernel accounts for under a tenth of what remains; the rest is dispatch and
-   the one unavoidable read-back of the survivor count.
+   by about 1.6×, but at 640×640 its kernel accounts for under a tenth of what remains; the rest is
+   dispatch and the one unavoidable read-back of the survivor count.
 3. **End to end, launches dominate.** In eager pipelines, swapping in either kernel changes per-frame
-   latency by less than run-to-run variation, because the models launch hundreds of small kernels
-   (YOLOv8n's host time is well above its GPU time). Compiling the model helps; capturing the static
-   part of the pipeline in a CUDA graph roughly halves latency. Even inside a CUDA graph, the custom
+   latency by less than run-to-run variation, because the models launch many small kernels (hundreds
+   per frame for YOLOv8n, dozens for the autoencoder), and YOLOv8n's host time is well above its GPU
+   time. Compiling YOLOv8n cuts detection latency by about a
+   quarter (compiling the small autoencoder does not measurably help); capturing the static part of
+   either pipeline in a CUDA graph roughly halves latency. Even inside a CUDA graph, the custom
    kernels' remaining gain is a few percent, within run-to-run spread.
 4. **The 2D-tiled kernel is slower because of memory access, not register pressure.** Nsight Compute
-   shows full occupancy for both kernels, but much lower global-load sector efficiency and
+   shows full theoretical occupancy for both kernels, but much lower global-load sector efficiency and
    memory-instruction (MIO) throttling for the 2D variant.
 5. **Benchmark hygiene changes conclusions.** A hidden `.tolist()` sync inside a timed region, a
    cache flush that hides launch overhead, and a write-based cache flush whose dirty-line write-back is

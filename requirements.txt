@@ -5,7 +5,7 @@ triton==3.1.0
 numpy==2.2.6
 pyyaml==6.0.3
 tabulate==0.10.0
-pillow
+pillow==12.1.1
 ultralytics==8.4.21
 pytest==9.1.1
 pytest-cov==7.1.0

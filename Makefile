@@ -32,6 +32,7 @@ paper: report figures
 
 check:
 	$(PYTHON) scripts/render_report.py --check
+	$(PYTHON) paper/generate_figures.py --check
 
 clean:
 	rm -rf build dist *.egg-info .pytest_cache .coverage htmlcov paper/build

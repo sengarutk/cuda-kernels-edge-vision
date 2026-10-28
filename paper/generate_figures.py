@@ -1,5 +1,10 @@
-"""Builds the paper figures from results/*.json (no hard-coded measurements)."""
+"""Builds the paper figures from results/*.json (no hard-coded measurements).
+
+`--check` renders into a temporary directory and fails if any committed figure differs.
+"""
 import json
+import sys
+import tempfile
 from pathlib import Path
 
 import matplotlib
@@ -61,7 +66,8 @@ def fig_preprocess():
     ax.set_xticklabels([RES_LABELS.get(r, r) for r in rz])
     ax.grid(axis="y", which="major", linewidth=0.4, alpha=0.5)
     ax.legend(ncol=3, frameon=False, loc="upper left", bbox_to_anchor=(0, 1.22))
-    fig.savefig(OUT / "fig_preprocess.pdf", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(OUT / "fig_preprocess.pdf", bbox_inches="tight", pad_inches=0.02,
+                metadata={"CreationDate": None})
     plt.close(fig)
 
 
@@ -77,7 +83,7 @@ def _color(config):
 
 def fig_pipelines():
     data = load("pipelines")["results"]
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.2))
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.0))
     for ax, kind, title in ((axes[0], "anomaly", "Anomaly (256×256 autoencoder)"),
                             (axes[1], "detection", "Detection (640×640 YOLOv8n + NMS)")):
         entries = data[kind]
@@ -91,10 +97,11 @@ def fig_pipelines():
         ax.set_yticks(y)
         ax.set_yticklabels(names, fontsize=6.5)
         ax.set_title(title, loc="left")
-        ax.set_xlabel("End-to-end host latency (ms): bar p50, whisker p95")
+        ax.set_xlabel("End-to-end host latency (ms)")
         ax.grid(axis="x", linewidth=0.4, alpha=0.5)
     fig.tight_layout(w_pad=1.5)
-    fig.savefig(OUT / "fig_pipelines.pdf", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(OUT / "fig_pipelines.pdf", bbox_inches="tight", pad_inches=0.02,
+                metadata={"CreationDate": None})
     plt.close(fig)
 
 
@@ -102,7 +109,7 @@ def fig_stages():
     entries = [e for e in load("pipelines")["results"]["detection"] if e["stages"]]
     stages = list(entries[0]["stages"])
     colors = ["#CCCCCC", "#0072B2", "#555555", "#E69F00", "#CC79A7"]
-    fig, ax = plt.subplots(figsize=(7.0, 2.1))
+    fig, ax = plt.subplots(figsize=(7.0, 1.75))
     y = np.arange(len(entries))[::-1]
     for mode, offset, hatch in (("host_us", 0.19, None), ("device_us", -0.19, "////")):
         left = np.zeros(len(entries))
@@ -116,7 +123,8 @@ def fig_stages():
     ax.set_xlabel("Per-stage p50 (ms): upper bar host latency, hatched bar device time")
     ax.legend(ncol=5, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0))
     ax.grid(axis="x", linewidth=0.4, alpha=0.5)
-    fig.savefig(OUT / "fig_stages.pdf", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(OUT / "fig_stages.pdf", bbox_inches="tight", pad_inches=0.02,
+                metadata={"CreationDate": None})
     plt.close(fig)
 
 
@@ -149,17 +157,35 @@ def fig_ncu_stalls():
     ax.set_xlim(0, 100)
     ax.set_xlabel("Share of stalled warps per issued instruction (%)")
     ax.legend(ncol=3, frameon=False, loc="upper left", bbox_to_anchor=(0, 1.32))
-    fig.savefig(OUT / "fig_ncu_stalls.pdf", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(OUT / "fig_ncu_stalls.pdf", bbox_inches="tight", pad_inches=0.02,
+                metadata={"CreationDate": None})
     plt.close(fig)
 
 
-def main():
+def render_all():
     OUT.mkdir(parents=True, exist_ok=True)
     fig_preprocess()
     fig_pipelines()
     fig_stages()
     fig_ncu_stalls()
-    print("[saved] " + ", ".join(sorted(p.name for p in OUT.glob("*.pdf"))))
+
+
+def main():
+    global OUT
+    if "--check" not in sys.argv[1:]:
+        render_all()
+        print("[saved] " + ", ".join(sorted(p.name for p in OUT.glob("*.pdf"))))
+        return
+    committed = OUT
+    with tempfile.TemporaryDirectory() as tmp:
+        OUT = Path(tmp)
+        render_all()
+        stale = [p.name for p in sorted(OUT.glob("*.pdf"))
+                 if not (committed / p.name).exists()
+                 or (committed / p.name).read_bytes() != p.read_bytes()]
+    if stale:
+        sys.exit("Stale figures (run `make figures`): " + ", ".join(stale))
+    print("Figures are up to date.")
 
 
 if __name__ == "__main__":

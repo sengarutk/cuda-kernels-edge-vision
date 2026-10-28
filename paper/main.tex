@@ -9,6 +9,7 @@
 \usepackage{xcolor}
 \usepackage[hidelinks]{hyperref}
 \usepackage{cite}
+\raggedbottom
 
 % Every measured number below is a \res macro generated from results/*.json by
 % scripts/render_report.py. Do not type measurements into this file.
@@ -112,13 +113,15 @@ before every call, outside the timed window. Reading matters: a write-based flus
 full of dirty lines, and their write-back is then charged to the measured kernel
 (Section~\ref{sec:discussion}). Isolated kernels run 300 timed calls after 30 warm-up
 calls. Pipelines run 10 interleaved blocks of 300 frames per configuration, in an order that
-rotates per block; we report pooled percentiles and the spread of block medians.
+rotates per block; we report pooled percentiles and the spread of block medians. CUDA event
+timestamps on this system mostly advance in 1.024\,\textmu s steps, so device times of a few
+microseconds carry about $\pm1$\,\textmu s of quantization.
 
 \noindent\textbf{Workloads.} Preprocessing uses random frames from 256$\times$256 to
 3840$\times$2160. The filter and the detection pipeline use real YOLOv8n outputs for the
 Ultralytics \texttt{bus.jpg} scene (\res{filter/640/cands} candidates, \res{filter/640/kept} above
-threshold, 5 detections after NMS at 640$\times$640). The anomaly autoencoder has seeded random
-weights: we measure latency, not accuracy~\cite{bergmann2019mvtec}. Every kernel output is verified
+threshold, 5 detections after NMS at 640$\times$640). The anomaly autoencoder, sized for MVTec-AD-style inspection~\cite{bergmann2019mvtec}, has
+seeded random weights: we measure latency, not accuracy. Every kernel output is verified
 against PyTorch before timing (max FP32 deviation \res{pre/max_err_fp32}).
 
 \section{Results}
@@ -236,7 +239,8 @@ preprocessing with the Triton kernel changes p50 latency by
 \res{pipe/anomaly/pre=triton,model=eager/gain}\% (positive means faster), within the
 \res{pipe/anomaly/pre=eager,model=eager/spread}--\res{pipe/anomaly/pre=triton,model=eager/spread}\%
 spread of block medians. In the detection pipeline, using both kernels changes it by
-\res{pipe/detection/pre=triton,model=eager,filter=triton/gain}\%. Figure~\ref{fig:stages} explains
+\res{pipe/detection/pre=triton,model=eager,filter=triton/gain}\% (spread
+\res{pipe/detection/pre=triton,model=eager,filter=triton/spread}\%). Figure~\ref{fig:stages} explains
 why: YOLOv8n inference takes \res{pipe/detection/pre=eager,model=eager,filter=eager/inference/host}\,\textmu s
 of host latency but only \res{pipe/detection/pre=eager,model=eager,filter=eager/inference/dev}\,\textmu s
 on the GPU. The pipeline is bound by launching the model's kernels, and preprocessing and filtering
@@ -261,7 +265,7 @@ configuration), so we do not claim them as significant.
 1080p the preprocessing kernel sustains \res{ncu/preprocess_triton_1920x1080/main/dram}\% of peak DRAM
 throughput under Nsight Compute. But at batch 1 on this system, the GPU
 time they save is microseconds, while each Python-level dispatch costs tens of microseconds and the
-model launches hundreds of kernels. Removing launches (CUDA graphs, model compilation) therefore
+models launch dozens (autoencoder) to hundreds (YOLOv8n) of kernels per frame. Removing launches (CUDA graphs, model compilation) therefore
 dominates. A custom kernel is most useful where the compiler cannot reach it (data-dependent
 compaction, as in Kernel~2) or inside a graph-captured or C++ runtime, where its smaller GPU time is
 no longer hidden behind dispatch.
@@ -269,8 +273,8 @@ no longer hidden behind dispatch.
 \noindent\textbf{Measurement pitfalls.} Three effects changed conclusions while this study was
 being done. First, any synchronization inside a timed region (here an innocuous \texttt{.tolist()})
 turns kernel timing into host-latency timing for one side of a comparison only. Second, a cache-flush
-kernel placed before each timed call also hides launch overhead behind the flush, so ``isolated''
-GPU times silently exclude dispatch. Third, the common write-based flush (\texttt{zero\_()}) leaves
+kernel placed before each timed call also hides launch overhead behind the flush, so a benchmark
+meant to report latency silently reports device time. Third, the common write-based flush (\texttt{zero\_()}) leaves
 the L2 full of dirty lines: the 1080p preprocessing kernel writes \res{ncu/preprocess_triton_1920x1080/main/wrmb}\,MB
 to DRAM during its own execution under Nsight Compute, but under a write-based flush it must also
 evict up to \res{env/l2_cache_mb}\,MB of unrelated dirty data, a cost comparable to the kernel's own

@@ -38,6 +38,13 @@ fused kernel saves an application, and host latency alone hides what the GPU act
 - **Warm** (pipelines; the filter benchmark reports both): no flush. This is the steady state
   of a camera loop processing frames of the same shape.
 
+## Timer resolution
+
+CUDA event timestamps have a nominal resolution of 32 ns, but on this system most readings fall on
+multiples of 1.024 µs. Device times of a few microseconds (the 256x256 kernels, the filter kernel)
+therefore carry about ±1 µs of quantization, and ratios between them (for example the 1.00× of the
+Triton kernel against TorchInductor at 256x256) should be read with that in mind.
+
 ## Iterations and statistics
 
 - Isolated kernels: 30 warm-up calls, then 300 timed calls per mode and configuration.

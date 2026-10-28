@@ -9,6 +9,10 @@ if ! command -v pdflatex >/dev/null 2>&1; then
     exit 1
 fi
 
+# Fixed timestamps (the date results/ last changed) make the PDF reproducible byte for byte.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct -- ../results 2>/dev/null || echo 0)}"
+export FORCE_SOURCE_DATE=1
+
 mkdir -p build
 pdflatex -interaction=nonstopmode -halt-on-error -output-directory build main.tex >/dev/null
 (cd build && BIBINPUTS=.. bibtex main >/dev/null)

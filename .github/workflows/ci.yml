@@ -18,10 +18,13 @@ jobs:
       - name: Install CPU dependencies
         run: |
           pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-          pip install triton==3.1.0 numpy==2.2.6 pyyaml tabulate pillow pytest
+          pip install triton==3.1.0 numpy==2.2.6 pyyaml==6.0.3 tabulate==0.10.0 \
+            pillow==12.1.1 matplotlib==3.10.8 pytest==9.1.1
       - name: Tests (GPU tests skipped)
         run: python -m pytest
         env:
           PYTHONPATH: ${{ github.workspace }}
       - name: Generated report is up to date
         run: python scripts/render_report.py --check
+      - name: Generated figures are up to date
+        run: python paper/generate_figures.py --check
