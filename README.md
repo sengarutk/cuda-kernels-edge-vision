@@ -143,3 +143,9 @@ tests/        pytest suite and fixtures
 
 Utkarsh Sengar, *When Does Kernel Fusion Help? A Measured Study of Batch-1 Edge Vision Pipelines on
 a Laptop GPU*, IIT Dharwad, 2026. Source and paper ([paper/main.pdf](paper/main.pdf)): this repository.
+
+## License
+
+MIT; see [LICENSE](LICENSE). The optional YOLOv8n path loads the model with
+[Ultralytics](https://github.com/ultralytics/ultralytics), which is licensed separately under AGPL-3.0,
+and the downloaded `yolov8n.pt` weights are under Ultralytics' terms.

@@ -8,6 +8,7 @@ version = "1.1.0"
 description = "Triton GPU kernels for batch-1 edge vision pre- and post-processing, with a measured latency study on an RTX 4050 Laptop GPU."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 authors = [{ name = "Utkarsh Sengar", email = "cs23bt026@iitdh.ac.in" }]
 dependencies = [
     "torch>=2.5",

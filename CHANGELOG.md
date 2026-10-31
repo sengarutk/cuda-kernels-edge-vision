@@ -45,6 +45,7 @@ all of them, fixes the measurement methodology and regenerates every number from
 
 ### Changes
 
+- **License:** the code is released under the MIT license (`LICENSE`).
 - **Kernels:** normalization folded into one FMA per element; the 2D variant uses the same
   synchronization-free dispatch as the 1D kernel (renamed `fused_preprocess_2d`). The candidate
   filter is rewritten as a single pass: a compile-time-unrolled class reduction with coalesced
